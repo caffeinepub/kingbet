@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { AdminBetsPage } from "@/pages/admin/AdminBetsPage";
 import { AdminCasinoPage } from "@/pages/admin/AdminCasinoPage";
 import { AdminCrashPage } from "@/pages/admin/AdminCrashPage";
+import { AdminGamesPage } from "@/pages/admin/AdminGamesPage";
 import { AdminLayout } from "@/pages/admin/AdminLayout";
 import { AdminMarketsPage } from "@/pages/admin/AdminMarketsPage";
 import { AdminUsersPage } from "@/pages/admin/AdminUsersPage";
@@ -422,6 +423,8 @@ export function SuperAdminDashboard() {
         return <AdminCasinoPage />;
       case "admin-crash":
         return <AdminCrashPage />;
+      case "admin-games":
+        return <AdminGamesPage />;
       case "superadmin-admins":
         return <AdminsSection />;
       default:

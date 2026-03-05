@@ -3,14 +3,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useActor } from "@/hooks/useActor";
 import { useStore } from "@/store/useStore";
-import { Circle, Clock, RefreshCw } from "lucide-react";
-import { motion } from "motion/react";
+import { Circle, Clock } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-// Payout multiplier calculation for casino games
+// ─── Payout calculation ──────────────────────────────────────────────────────
+
 function calculateCasinoPnl(
   game: string,
   selectedBet: string,
@@ -23,12 +23,10 @@ function calculateCasinoPnl(
 
   if (game === "roulette") {
     const resultNum = Number.parseInt(result, 10);
-    // Number bet
     if (/^\d+$/.test(selectedBet)) {
       if (selectedBet === result) return stake * 35;
       return -stake;
     }
-    // Color/even-odd bets
     const isRed = !Number.isNaN(resultNum) && redNums.has(resultNum);
     const isEven =
       !Number.isNaN(resultNum) && resultNum !== 0 && resultNum % 2 === 0;
@@ -53,86 +51,384 @@ function calculateCasinoPnl(
   return -stake;
 }
 
-interface CasinoRound {
-  id: bigint;
-  game: string;
-  status: string;
-  startTime: bigint;
-  result: string;
-  totalPool: bigint;
+// Generate random result for a game
+function generateResult(game: string): string {
+  if (game === "roulette") {
+    return String(Math.floor(Math.random() * 37)); // 0-36
+  }
+  if (game === "teenpatti") {
+    const outcomes = ["player_a", "tie", "player_b"];
+    return outcomes[Math.floor(Math.random() * outcomes.length)];
+  }
+  if (game === "andarbhar") {
+    return Math.random() < 0.5 ? "andar" : "bahar";
+  }
+  return "";
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { color: string; bg: string; label: string }> = {
-    open: {
-      color: "oklch(0.65 0.18 145)",
-      bg: "oklch(0.65 0.18 145 / 0.15)",
-      label: "Open",
+// ─── Phase constants ─────────────────────────────────────────────────────────
+
+type RoundPhase = "betting" | "closed" | "result" | "wait";
+
+const PHASE_DURATIONS: Record<RoundPhase, number> = {
+  betting: 15, // seconds — user can bet
+  closed: 1, // seconds — bets locked, generating result
+  result: 4, // seconds — show result
+  wait: 2, // seconds — pause before next round
+};
+
+// ─── Local auto-loop hook ────────────────────────────────────────────────────
+
+interface LocalRoundState {
+  phase: RoundPhase;
+  countdown: number; // seconds remaining in current phase
+  result: string | null; // set during result phase
+  roundId: number;
+}
+
+function useLocalCasinoLoop(game: string) {
+  const [state, setState] = useState<LocalRoundState>({
+    phase: "betting",
+    countdown: PHASE_DURATIONS.betting,
+    result: null,
+    roundId: 1,
+  });
+
+  // Store pending bet so we can settle it when result arrives
+  const pendingBetRef = useRef<{ bet: string; stake: number } | null>(null);
+  const roundResultRef = useRef<string | null>(null);
+
+  const { currentUser, creditUserBalance, debitUserBalance, addCasinoHistory } =
+    useStore();
+
+  // Tick every second
+  useEffect(() => {
+    const id = setInterval(() => {
+      setState((prev) => {
+        const newCountdown = prev.countdown - 1;
+
+        if (newCountdown > 0) {
+          return { ...prev, countdown: newCountdown };
+        }
+
+        // Phase ended — advance to next phase
+        const phases: RoundPhase[] = ["betting", "closed", "result", "wait"];
+        const currentIdx = phases.indexOf(prev.phase);
+        const nextPhase = phases[(currentIdx + 1) % phases.length];
+
+        let newResult = prev.result;
+        let newRoundId = prev.roundId;
+
+        if (prev.phase === "closed") {
+          // Generate result now (transition from closed → result)
+          newResult = generateResult(game);
+          roundResultRef.current = newResult;
+        }
+
+        if (nextPhase === "betting") {
+          // New round starting
+          newResult = null;
+          roundResultRef.current = null;
+          pendingBetRef.current = null;
+          newRoundId = prev.roundId + 1;
+        }
+
+        return {
+          phase: nextPhase,
+          countdown: PHASE_DURATIONS[nextPhase],
+          result: newResult,
+          roundId: newRoundId,
+        };
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [game]);
+
+  // Settle bets when result phase starts
+  useEffect(() => {
+    if (
+      state.phase === "result" &&
+      state.result &&
+      pendingBetRef.current &&
+      currentUser
+    ) {
+      const { bet, stake } = pendingBetRef.current;
+      const pnl = calculateCasinoPnl(game, bet, state.result, stake);
+
+      if (pnl > 0) {
+        creditUserBalance(currentUser.id, pnl);
+        toast.success(`🎉 You won ₹${pnl.toFixed(2)}!`, {
+          description: `Result: ${state.result}`,
+        });
+      } else {
+        debitUserBalance(currentUser.id, Math.abs(pnl));
+        toast.error(`Lost ₹${Math.abs(pnl).toFixed(2)}`, {
+          description: `Result: ${state.result}`,
+        });
+      }
+
+      addCasinoHistory({
+        userId: currentUser.id,
+        game,
+        roundId: String(state.roundId),
+        bet,
+        stake,
+        result: state.result,
+        pnl,
+        placedAt: new Date().toISOString(),
+      });
+
+      // Clear pending bet after settlement
+      pendingBetRef.current = null;
+    }
+  }, [
+    state.phase,
+    state.result,
+    state.roundId,
+    game,
+    currentUser,
+    creditUserBalance,
+    debitUserBalance,
+    addCasinoHistory,
+  ]);
+
+  const placeBet = useCallback(
+    (bet: string, stake: number) => {
+      if (state.phase !== "betting") {
+        toast.error("Betting is closed for this round");
+        return false;
+      }
+      if (!currentUser) {
+        toast.error("Please login first");
+        return false;
+      }
+      if (currentUser.balance < stake) {
+        toast.error("Insufficient balance");
+        return false;
+      }
+      // Debit stake immediately (will be credited back + winnings on settlement)
+      debitUserBalance(currentUser.id, stake);
+      pendingBetRef.current = { bet, stake };
+      toast.success(`Bet placed: ${bet} @ ₹${stake}`, {
+        description: "Waiting for round to close...",
+      });
+      return true;
     },
+    [state.phase, currentUser, debitUserBalance],
+  );
+
+  const hasPendingBet = !!pendingBetRef.current;
+
+  return { state, placeBet, hasPendingBet };
+}
+
+// ─── Status badge ────────────────────────────────────────────────────────────
+
+function PhaseBadge({ phase }: { phase: RoundPhase }) {
+  const map: Record<
+    RoundPhase,
+    { color: string; bg: string; label: string; dot: boolean }
+  > = {
     betting: {
       color: "oklch(var(--saffron))",
       bg: "oklch(var(--saffron) / 0.15)",
-      label: "Betting Open",
+      label: "BETTING OPEN",
+      dot: true,
     },
     closed: {
       color: "oklch(0.55 0.01 265)",
       bg: "oklch(0.55 0.01 265 / 0.15)",
-      label: "Closed",
+      label: "CLOSED",
+      dot: false,
     },
-    settled: {
-      color: "oklch(var(--back))",
-      bg: "oklch(var(--back) / 0.15)",
-      label: "Settled",
+    result: {
+      color: "oklch(var(--gold))",
+      bg: "oklch(var(--gold) / 0.15)",
+      label: "RESULT",
+      dot: false,
+    },
+    wait: {
+      color: "oklch(0.55 0.01 265)",
+      bg: "oklch(0.55 0.01 265 / 0.15)",
+      label: "NEXT ROUND",
+      dot: false,
     },
   };
-  const info = map[status] ?? map.open;
+  const info = map[phase];
   return (
     <Badge
       variant="outline"
-      className="text-xs font-semibold"
+      className="text-xs font-bold flex items-center gap-1.5"
       style={{
         background: info.bg,
         color: info.color,
-        borderColor: `${info.color}44`,
+        borderColor: `${info.color}55`,
       }}
     >
+      {info.dot && (
+        <span
+          className="w-1.5 h-1.5 rounded-full animate-pulse inline-block"
+          style={{ background: info.color }}
+        />
+      )}
       {info.label}
     </Badge>
   );
 }
 
-function CountdownTimer({
-  startTime,
-  status,
-}: { startTime: bigint; status: string }) {
-  const [remaining, setRemaining] = useState(0);
+// ─── Countdown ring ──────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    if (status !== "betting") return;
-    const startMs = Number(startTime) / 1_000_000;
-    const endMs = startMs + 30_000;
-
-    const tick = () => {
-      const now = Date.now();
-      const rem = Math.max(0, Math.ceil((endMs - now) / 1000));
-      setRemaining(rem);
-    };
-    tick();
-    const id = setInterval(tick, 500);
-    return () => clearInterval(id);
-  }, [startTime, status]);
-
-  if (status !== "betting") return null;
-
+function CountdownRing({ seconds, total }: { seconds: number; total: number }) {
+  const r = 16;
+  const circumference = 2 * Math.PI * r;
+  const progress = seconds / total;
+  const strokeDashoffset = circumference * (1 - progress);
   return (
-    <div className="flex items-center gap-1.5 text-saffron text-sm font-bold">
-      <Clock className="w-4 h-4" />
-      {remaining}s
+    <svg
+      width="44"
+      height="44"
+      className="rotate-[-90deg]"
+      aria-label={`${seconds} seconds remaining`}
+      role="img"
+    >
+      <title>{seconds} seconds remaining</title>
+      <circle
+        cx="22"
+        cy="22"
+        r={r}
+        fill="none"
+        stroke="oklch(var(--border))"
+        strokeWidth="3"
+      />
+      <circle
+        cx="22"
+        cy="22"
+        r={r}
+        fill="none"
+        stroke="oklch(var(--saffron))"
+        strokeWidth="3"
+        strokeDasharray={circumference}
+        strokeDashoffset={strokeDashoffset}
+        strokeLinecap="round"
+        style={{ transition: "stroke-dashoffset 0.9s linear" }}
+      />
+      <text
+        x="22"
+        y="22"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize="10"
+        fontWeight="bold"
+        fill="oklch(var(--saffron))"
+        style={{ transform: "rotate(90deg)", transformOrigin: "22px 22px" }}
+      >
+        {seconds}
+      </text>
+    </svg>
+  );
+}
+
+// ─── Countdown display ───────────────────────────────────────────────────────
+
+function PhaseCountdown({
+  phase,
+  countdown,
+}: {
+  phase: RoundPhase;
+  countdown: number;
+}) {
+  if (phase === "betting") {
+    return (
+      <CountdownRing seconds={countdown} total={PHASE_DURATIONS.betting} />
+    );
+  }
+  return (
+    <div className="flex items-center gap-1.5 text-sm text-muted-foreground font-medium">
+      <Clock className="w-3.5 h-3.5" />
+      <span>{countdown}s</span>
     </div>
   );
 }
 
-// Roulette betting board
+// ─── Round locked overlay ────────────────────────────────────────────────────
+
+function LockedOverlay({
+  phase,
+  countdown,
+  result,
+}: {
+  phase: RoundPhase;
+  countdown: number;
+  result: string | null;
+}) {
+  if (phase === "betting") return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="absolute inset-0 rounded-xl flex flex-col items-center justify-center z-10"
+      style={{
+        background: "oklch(var(--card) / 0.95)",
+        backdropFilter: "blur(4px)",
+      }}
+    >
+      {phase === "closed" && (
+        <div className="text-center">
+          <div className="text-4xl mb-3 animate-spin">⏳</div>
+          <p className="text-lg font-bold text-foreground">Round Closed</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Generating result…
+          </p>
+        </div>
+      )}
+
+      {phase === "result" && result && (
+        <div className="text-center">
+          <motion.div
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", bounce: 0.4 }}
+            className="text-5xl mb-3"
+          >
+            🎯
+          </motion.div>
+          <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+            Result
+          </p>
+          <motion.p
+            initial={{ y: 10, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="text-2xl font-black"
+            style={{ color: "oklch(var(--gold))" }}
+          >
+            {result}
+          </motion.p>
+          <p className="text-xs text-muted-foreground mt-3">
+            Next round in {countdown}s
+          </p>
+        </div>
+      )}
+
+      {phase === "wait" && (
+        <div className="text-center">
+          <div className="text-4xl mb-3">🔄</div>
+          <p className="text-lg font-bold text-foreground">Next Round</p>
+          <p
+            className="text-sm font-mono font-bold mt-1"
+            style={{ color: "oklch(var(--saffron))" }}
+          >
+            Starting in {countdown}s
+          </p>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ─── Roulette betting board ──────────────────────────────────────────────────
+
 function RouletteBetting({
   onBet,
   disabled,
@@ -147,7 +443,6 @@ function RouletteBetting({
 
   return (
     <div className="space-y-3">
-      {/* Outside bets */}
       <div className="grid grid-cols-4 gap-1.5">
         {[
           { label: "Red", value: "red", color: "oklch(0.60 0.22 20)" },
@@ -168,9 +463,7 @@ function RouletteBetting({
           </button>
         ))}
       </div>
-      {/* Number grid (0-36) */}
       <div className="grid grid-cols-[40px_repeat(12,_1fr)] gap-0.5 text-[10px]">
-        {/* Zero */}
         <button
           type="button"
           disabled={disabled}
@@ -201,7 +494,8 @@ function RouletteBetting({
   );
 }
 
-// Teen Patti betting
+// ─── Teen Patti betting ──────────────────────────────────────────────────────
+
 function TeenPattiBetting({
   onBet,
   disabled,
@@ -247,7 +541,8 @@ function TeenPattiBetting({
   );
 }
 
-// Andar Bahar betting
+// ─── Andar Bahar betting ─────────────────────────────────────────────────────
+
 function AndarBaharBetting({
   onBet,
   disabled,
@@ -295,6 +590,15 @@ function AndarBaharBetting({
   );
 }
 
+// ─── Round history (local) ───────────────────────────────────────────────────
+
+interface LocalHistoryEntry {
+  roundId: number;
+  result: string;
+}
+
+// ─── Game Panel ──────────────────────────────────────────────────────────────
+
 interface GamePanelProps {
   game: string;
   displayName: string;
@@ -302,298 +606,203 @@ interface GamePanelProps {
 }
 
 function GamePanel({ game, displayName, icon }: GamePanelProps) {
-  const { actor } = useActor();
-  const currentUser = useStore((s) => s.currentUser);
-  const addCasinoHistory = useStore((s) => s.addCasinoHistory);
-
-  const [activeRound, setActiveRound] = useState<CasinoRound | null>(null);
-  const [history, setHistory] = useState<CasinoRound[]>([]);
+  const { state, placeBet, hasPendingBet } = useLocalCasinoLoop(game);
   const [stake, setStake] = useState(100);
   const [selectedBet, setSelectedBet] = useState<string | null>(null);
-  const [placing, setPlacing] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const pollRef = useRef<ReturnType<typeof setInterval>>(null);
-  // Track which round IDs we've already recorded history for
-  const recordedRoundsRef = useRef<Set<string>>(new Set());
-  // Track the bet for the current round before settlement
-  const pendingBetRef = useRef<{ bet: string; stake: number } | null>(null);
+  const [localHistory, setLocalHistory] = useState<LocalHistoryEntry[]>([]);
 
-  const fetchData = useCallback(async () => {
-    if (!actor) return;
-    try {
-      const [rounds, hist] = await Promise.all([
-        (
-          actor as unknown as {
-            getActiveCasinoRounds: () => Promise<CasinoRound[]>;
-          }
-        ).getActiveCasinoRounds(),
-        (
-          actor as unknown as {
-            getCasinoRoundHistory: (g: string) => Promise<CasinoRound[]>;
-          }
-        ).getCasinoRoundHistory(game),
-      ]);
-      const forThisGame = rounds.filter((r) => r.game === game);
-      const round = forThisGame[0] ?? null;
-
-      // Check if a settled round has a pending bet to record
-      if (
-        round &&
-        round.status === "settled" &&
-        round.result &&
-        pendingBetRef.current &&
-        currentUser &&
-        !recordedRoundsRef.current.has(String(round.id))
-      ) {
-        recordedRoundsRef.current.add(String(round.id));
-        const { bet, stake: betStake } = pendingBetRef.current;
-        const pnl = calculateCasinoPnl(game, bet, round.result, betStake);
-        addCasinoHistory({
-          userId: currentUser.id,
-          game,
-          roundId: String(round.id),
-          bet,
-          stake: betStake,
-          result: round.result,
-          pnl,
-          placedAt: new Date().toISOString(),
-        });
-        pendingBetRef.current = null;
-      }
-
-      setActiveRound(round);
-      setHistory(hist.slice(0, 10));
-    } catch {
-      // backend not connected yet — keep mock state
-    } finally {
-      setLoading(false);
-    }
-  }, [actor, game, currentUser, addCasinoHistory]);
-
+  // Collect results into local history when result phase starts
   useEffect(() => {
-    fetchData();
-    pollRef.current = setInterval(fetchData, 4000);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [fetchData]);
+    if (state.phase === "result" && state.result) {
+      setLocalHistory((prev) => [
+        { roundId: state.roundId, result: state.result! },
+        ...prev.slice(0, 9),
+      ]);
+    }
+  }, [state.phase, state.result, state.roundId]);
+
+  // Clear selected bet when round closes
+  useEffect(() => {
+    if (state.phase !== "betting") {
+      setSelectedBet(null);
+    }
+  }, [state.phase]);
 
   const handleBetChoice = (choice: string) => {
+    if (state.phase !== "betting") return;
     setSelectedBet(choice);
   };
 
-  const handlePlaceBet = async () => {
-    if (!actor || !activeRound || !selectedBet) return;
-    if (!currentUser) return;
-    if (stake <= 0) return toast.error("Enter a valid stake");
-
-    setPlacing(true);
-    try {
-      const betData = selectedBet;
-      await (
-        actor as unknown as {
-          placeCasinoBet: (
-            id: bigint,
-            amt: bigint,
-            data: string,
-          ) => Promise<bigint>;
-        }
-      ).placeCasinoBet(
-        activeRound.id,
-        BigInt(Math.round(stake * 100)),
-        betData,
-      );
-      // Store pending bet so we can record history when round settles
-      pendingBetRef.current = { bet: selectedBet, stake };
-      toast.success(`Bet placed: ${selectedBet} @ ₹${stake}`, {
-        description: `${displayName} — Round #${activeRound.id}`,
-      });
-      setSelectedBet(null);
-      await fetchData();
-    } catch {
-      toast.error("Failed to place bet. Try again.");
-    } finally {
-      setPlacing(false);
-    }
+  const handlePlaceBet = () => {
+    if (!selectedBet) return;
+    const success = placeBet(selectedBet, stake);
+    if (success) setSelectedBet(null);
   };
 
-  const canBet =
-    activeRound &&
-    (activeRound.status === "open" || activeRound.status === "betting");
+  const canBet = state.phase === "betting" && !hasPendingBet;
+  const bettingDisabled = !canBet;
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
-      {/* Round Status */}
+      {/* Round Status header */}
       <div className="rounded-xl border border-border bg-card p-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <span className="text-2xl">{icon}</span>
             <div>
               <h3 className="font-bold text-foreground">{displayName}</h3>
-              {activeRound ? (
-                <p className="text-xs text-muted-foreground">
-                  Round #{String(activeRound.id)}
-                </p>
-              ) : (
-                <p className="text-xs text-muted-foreground">No active round</p>
-              )}
+              <p className="text-xs text-muted-foreground">
+                Round #{state.roundId}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {activeRound && (
-              <CountdownTimer
-                startTime={activeRound.startTime}
-                status={activeRound.status}
-              />
-            )}
-            {activeRound ? (
-              <StatusBadge status={activeRound.status} />
-            ) : (
-              <Badge
-                variant="outline"
-                className="text-xs text-muted-foreground border-border"
-              >
-                Waiting
-              </Badge>
-            )}
+            <PhaseCountdown phase={state.phase} countdown={state.countdown} />
+            <PhaseBadge phase={state.phase} />
           </div>
         </div>
 
-        {!activeRound && !loading && (
-          <div className="text-center py-6 text-muted-foreground text-sm">
-            <RefreshCw className="w-6 h-6 mx-auto mb-2 opacity-40 animate-spin" />
-            Next round starting soon...
-          </div>
-        )}
-
-        {activeRound?.result && activeRound.status === "settled" && (
-          <div
-            className="mt-2 rounded-lg p-2 text-center text-sm font-bold"
-            style={{
-              background: "oklch(var(--gold) / 0.15)",
-              color: "oklch(var(--gold))",
-            }}
-          >
-            Result: {activeRound.result}
+        {/* Betting window progress bar */}
+        {state.phase === "betting" && (
+          <div className="mt-3">
+            <div className="h-1.5 rounded-full overflow-hidden bg-secondary">
+              <motion.div
+                className="h-full rounded-full"
+                style={{
+                  background:
+                    "linear-gradient(90deg, oklch(var(--saffron)), oklch(var(--gold)))",
+                }}
+                initial={{ width: "100%" }}
+                animate={{
+                  width: `${(state.countdown / PHASE_DURATIONS.betting) * 100}%`,
+                }}
+                transition={{ duration: 0.9, ease: "linear" }}
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              {hasPendingBet
+                ? "✅ Bet placed — waiting for result"
+                : "Betting window open"}
+            </p>
           </div>
         )}
       </div>
 
-      {/* Betting Board */}
-      {canBet && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="rounded-xl border border-border bg-card p-4"
-          data-ocid={`casino.${game}.panel`}
-        >
-          <h4 className="font-semibold text-foreground mb-4 text-sm">
-            Place Your Bet
-          </h4>
+      {/* Betting board — with locked overlay during closed/result/wait */}
+      <div
+        className="relative rounded-xl border border-border bg-card p-4"
+        data-ocid={`casino.${game}.panel`}
+      >
+        <AnimatePresence>
+          <LockedOverlay
+            phase={state.phase}
+            countdown={state.countdown}
+            result={state.result}
+          />
+        </AnimatePresence>
 
-          {game === "roulette" && (
-            <RouletteBetting
-              onBet={handleBetChoice}
-              disabled={!canBet || placing}
-            />
-          )}
-          {game === "teenpatti" && (
-            <TeenPattiBetting
-              onBet={handleBetChoice}
-              disabled={!canBet || placing}
-            />
-          )}
-          {game === "andarbhar" && (
-            <AndarBaharBetting
-              onBet={handleBetChoice}
-              disabled={!canBet || placing}
-            />
-          )}
+        <h4 className="font-semibold text-foreground mb-4 text-sm">
+          Place Your Bet
+        </h4>
 
-          {selectedBet && (
-            <div className="mt-4 p-3 rounded-lg border border-gold/30 bg-gold/10">
-              <p className="text-xs text-muted-foreground">
-                Selected:{" "}
-                <span className="text-gold font-bold">{selectedBet}</span>
-              </p>
-            </div>
-          )}
+        {game === "roulette" && (
+          <RouletteBetting onBet={handleBetChoice} disabled={bettingDisabled} />
+        )}
+        {game === "teenpatti" && (
+          <TeenPattiBetting
+            onBet={handleBetChoice}
+            disabled={bettingDisabled}
+          />
+        )}
+        {game === "andarbhar" && (
+          <AndarBaharBetting
+            onBet={handleBetChoice}
+            disabled={bettingDisabled}
+          />
+        )}
 
-          {/* Stake input */}
-          <div className="mt-4 space-y-2">
-            <Label className="text-xs text-muted-foreground">Stake (₹)</Label>
-            <div className="flex gap-2">
-              <Input
-                type="number"
-                min={1}
-                value={stake}
-                onChange={(e) => setStake(Number(e.target.value) || 0)}
-                className="bg-input border-border h-9 font-mono text-sm flex-1"
-                data-ocid={`casino.${game}.stake_input`}
-              />
-              <Button
-                onClick={handlePlaceBet}
-                disabled={!selectedBet || placing || stake <= 0}
-                className="font-bold text-background h-9 px-4 shrink-0"
-                style={{
-                  background:
-                    selectedBet && !placing
-                      ? "linear-gradient(135deg, oklch(var(--gold)), oklch(var(--saffron)))"
-                      : undefined,
-                }}
-                data-ocid={`casino.${game}.place_bet_button`}
-              >
-                {placing ? (
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : (
-                  "Place Bet"
-                )}
-              </Button>
-            </div>
-            {/* Quick stakes */}
-            <div className="flex gap-1.5">
-              {[100, 500, 1000, 5000].map((amt) => (
-                <button
-                  key={amt}
-                  type="button"
-                  onClick={() => setStake(amt)}
-                  className="flex-1 text-xs py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:border-gold/50 transition-all"
-                >
-                  ₹{amt >= 1000 ? `${amt / 1000}k` : amt}
-                </button>
-              ))}
-            </div>
+        {selectedBet && state.phase === "betting" && (
+          <div className="mt-4 p-3 rounded-lg border border-gold/30 bg-gold/10">
+            <p className="text-xs text-muted-foreground">
+              Selected:{" "}
+              <span className="text-gold font-bold">{selectedBet}</span>
+            </p>
           </div>
-        </motion.div>
-      )}
+        )}
+
+        {/* Stake input */}
+        <div className="mt-4 space-y-2">
+          <Label className="text-xs text-muted-foreground">Stake (₹)</Label>
+          <div className="flex gap-2">
+            <Input
+              type="number"
+              min={1}
+              value={stake}
+              onChange={(e) => setStake(Number(e.target.value) || 0)}
+              disabled={bettingDisabled || hasPendingBet}
+              className="bg-input border-border h-9 font-mono text-sm flex-1"
+              data-ocid={`casino.${game}.stake_input`}
+            />
+            <Button
+              onClick={handlePlaceBet}
+              disabled={
+                !selectedBet || bettingDisabled || hasPendingBet || stake <= 0
+              }
+              className="font-bold text-background h-9 px-4 shrink-0"
+              style={{
+                background:
+                  selectedBet && canBet && !hasPendingBet
+                    ? "linear-gradient(135deg, oklch(var(--gold)), oklch(var(--saffron)))"
+                    : undefined,
+              }}
+              data-ocid={`casino.${game}.place_bet_button`}
+            >
+              {hasPendingBet ? "Bet Placed ✓" : "Place Bet"}
+            </Button>
+          </div>
+          <div className="flex gap-1.5">
+            {[100, 500, 1000, 5000].map((amt) => (
+              <button
+                key={amt}
+                type="button"
+                disabled={bettingDisabled || hasPendingBet}
+                onClick={() => setStake(amt)}
+                className="flex-1 text-xs py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:border-gold/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                ₹{amt >= 1000 ? `${amt / 1000}k` : amt}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
       {/* Round History */}
       <div className="rounded-xl border border-border bg-card p-4">
         <h4 className="font-semibold text-foreground mb-3 text-sm">
           Recent Results
         </h4>
-        {history.length === 0 ? (
+        {localHistory.length === 0 ? (
           <div
             className="text-center py-6 text-muted-foreground text-sm"
             data-ocid={`casino.${game}.history_empty_state`}
           >
             <Circle className="w-6 h-6 mx-auto mb-2 opacity-30" />
-            No results yet
+            No results yet — first round in progress
           </div>
         ) : (
-          <div className="space-y-2">
-            {history.map((round, i) => (
+          <div className="flex flex-wrap gap-2">
+            {localHistory.map((entry, i) => (
               <div
-                key={String(round.id)}
+                key={entry.roundId}
                 data-ocid={`casino.${game}.history_item.${i + 1}`}
-                className="flex items-center justify-between py-2 border-b border-border/50 last:border-0 text-sm"
+                className="px-3 py-1.5 rounded-lg text-xs font-bold border"
+                style={{
+                  background: "oklch(var(--gold) / 0.1)",
+                  borderColor: "oklch(var(--gold) / 0.3)",
+                  color: "oklch(var(--gold))",
+                }}
               >
-                <span className="text-muted-foreground">
-                  Round #{String(round.id)}
-                </span>
-                <span className="font-bold text-gold">
-                  {round.result || "—"}
-                </span>
+                #{entry.roundId} · {entry.result}
               </div>
             ))}
           </div>
@@ -602,6 +811,8 @@ function GamePanel({ game, displayName, icon }: GamePanelProps) {
     </div>
   );
 }
+
+// ─── Casino Page ─────────────────────────────────────────────────────────────
 
 export function CasinoPage() {
   return (
@@ -618,7 +829,7 @@ export function CasinoPage() {
             borderColor: "oklch(var(--saffron) / 0.3)",
           }}
         >
-          Live
+          Auto-Live
         </Badge>
       </div>
 

@@ -14,6 +14,9 @@ export function AccountPage() {
   const allBets = useStore((s) => s.bets);
   const allCasino = useStore((s) => s.casinoHistory);
   const allCrash = useStore((s) => s.crashHistory);
+  // Subscribe to lengths to ensure re-render when history changes
+  void allCasino.length;
+  void allCrash.length;
 
   if (!currentUser) return null;
 

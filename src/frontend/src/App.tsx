@@ -13,6 +13,7 @@ import { SuperAdminDashboard } from "@/pages/superadmin/SuperAdminDashboard";
 import { AccountPage } from "@/pages/user/AccountPage";
 import { CasinoPage } from "@/pages/user/CasinoPage";
 import { CrashPage } from "@/pages/user/CrashPage";
+import { GamesLobby } from "@/pages/user/GamesLobby";
 import { MarketsPage } from "@/pages/user/MarketsPage";
 import { MyBetsPage } from "@/pages/user/MyBetsPage";
 import { UserLayout } from "@/pages/user/UserLayout";
@@ -98,6 +99,7 @@ function App() {
         {currentPage === "user-account" && <AccountPage />}
         {currentPage === "user-casino" && <CasinoPage />}
         {currentPage === "user-crash" && <CrashPage />}
+        {currentPage === "user-games" && <GamesLobby />}
       </UserLayout>
       <BetSlip />
       <Toaster {...toasterProps} />

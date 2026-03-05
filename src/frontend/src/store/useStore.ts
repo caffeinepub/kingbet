@@ -119,11 +119,13 @@ export type Page =
   | "user-account"
   | "user-casino"
   | "user-crash"
+  | "user-games"
   | "admin-markets"
   | "admin-users"
   | "admin-bets"
   | "admin-casino"
   | "admin-crash"
+  | "admin-games"
   | "superadmin-dashboard"
   | "superadmin-admins"
   | "master-dashboard"
@@ -144,6 +146,7 @@ interface AppState {
   // Auth
   currentUser: User | null;
   currentPage: Page;
+  activeGame: string | null;
 
   // Data
   users: User[];
@@ -161,6 +164,7 @@ interface AppState {
   login: (username: string, password: string) => boolean;
   logout: () => void;
   setPage: (page: Page) => void;
+  setActiveGame: (game: string | null) => void;
 
   // Actions - Bet Slip
   openBetSlip: (state: Omit<BetSlipState, "isOpen" | "stake">) => void;
@@ -558,6 +562,7 @@ export const useStore = create<AppState>()(
     (set, get) => ({
       currentUser: null,
       currentPage: "landing",
+      activeGame: null,
       users: initialUsers,
       markets: initialMarkets,
       bets: initialBets,
@@ -591,6 +596,7 @@ export const useStore = create<AppState>()(
       },
 
       setPage: (page) => set({ currentPage: page }),
+      setActiveGame: (game) => set({ activeGame: game }),
 
       openBetSlip: (state) => {
         set({
@@ -948,7 +954,7 @@ export const useStore = create<AppState>()(
       },
     }),
     {
-      name: "kingbet-storage-v2",
+      name: "kingbet-storage-v3",
       partialize: (state) => ({
         users: state.users,
         markets: state.markets,

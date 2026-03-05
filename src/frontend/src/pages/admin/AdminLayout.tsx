@@ -5,6 +5,7 @@ import {
   ClipboardList,
   Crown,
   Dices,
+  Gamepad2,
   LogOut,
   Menu,
   Rocket,
@@ -39,6 +40,7 @@ export function AdminLayout({
     { label: "Bets", page: "admin-bets", icon: ClipboardList },
     { label: "Casino Control", page: "admin-casino", icon: Dices },
     { label: "Crash Control", page: "admin-crash", icon: Rocket },
+    { label: "Games Monitor", page: "admin-games", icon: Gamepad2 },
   ];
 
   const navItems = [...baseNavItems, ...extraNavItems];

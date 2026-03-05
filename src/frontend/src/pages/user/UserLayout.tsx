@@ -4,9 +4,8 @@ import { type Page, useStore } from "@/store/useStore";
 import {
   ClipboardList,
   Crown,
-  Dices,
+  Gamepad2,
   LogOut,
-  Rocket,
   TrendingUp,
   User,
   Wallet,
@@ -25,15 +24,13 @@ export function UserLayout({ children }: UserLayoutProps) {
     en: {
       markets: "Markets",
       bets: "My Bets",
-      casino: "Casino",
-      crash: "Crash",
+      games: "Games",
       account: "Account",
     },
     hi: {
       markets: "मार्केट",
       bets: "मेरे बेट",
-      casino: "कैसीनो",
-      crash: "क्रैश",
+      games: "गेम्स",
       account: "खाता",
     },
   };
@@ -42,8 +39,7 @@ export function UserLayout({ children }: UserLayoutProps) {
   const navItems = [
     { label: labels.markets, page: "user-markets" as Page, icon: TrendingUp },
     { label: labels.bets, page: "user-bets" as Page, icon: ClipboardList },
-    { label: labels.casino, page: "user-casino" as Page, icon: Dices },
-    { label: labels.crash, page: "user-crash" as Page, icon: Rocket },
+    { label: labels.games, page: "user-games" as Page, icon: Gamepad2 },
     { label: labels.account, page: "user-account" as Page, icon: User },
   ];
 
@@ -162,9 +158,14 @@ export function UserLayout({ children }: UserLayoutProps) {
             </Button>
           </div>
         </div>
+      </header>
 
-        {/* Mobile Nav */}
-        <div className="md:hidden flex items-center gap-0.5 px-2 pb-2 overflow-x-auto">
+      {/* Main Content */}
+      <main className="flex-1 overflow-auto pb-20 md:pb-0">{children}</main>
+
+      {/* Mobile Fixed Bottom Nav */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border">
+        <div className="flex items-stretch">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentPage === item.page;
@@ -172,33 +173,24 @@ export function UserLayout({ children }: UserLayoutProps) {
               <button
                 type="button"
                 key={item.page}
+                data-ocid={`mobile_nav.${item.page}.link`}
                 onClick={() => setPage(item.page)}
-                className={`flex-shrink-0 flex items-center justify-center gap-1 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-all duration-150 ${
+                className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2.5 text-[10px] font-medium transition-all duration-150 ${
                   isActive
-                    ? "bg-gold/15 text-gold"
-                    : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                    ? "text-gold"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <Icon className="w-3.5 h-3.5" />
-                <span className="hidden xs:inline">{item.label}</span>
+                <Icon className={`w-4 h-4 ${isActive ? "text-gold" : ""}`} />
+                <span>{item.label}</span>
               </button>
             );
           })}
-          {/* Mobile balance */}
-          <div className="ml-auto flex items-center gap-1 px-2 py-1.5 rounded-lg bg-secondary border border-border text-xs font-semibold text-foreground">
-            <Wallet className="w-3.5 h-3.5 text-gold" />₹
-            {currentUser?.balance.toLocaleString("en-IN", {
-              minimumFractionDigits: 0,
-            })}
-          </div>
         </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="flex-1 overflow-auto">{children}</main>
+      </nav>
 
       {/* Footer */}
-      <footer className="border-t border-border bg-card/50 py-4 px-4">
+      <footer className="hidden md:block border-t border-border bg-card/50 py-4 px-4">
         <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground">
           <div className="flex items-center gap-4">
             <button
@@ -211,19 +203,19 @@ export function UserLayout({ children }: UserLayoutProps) {
             </button>
             <button
               type="button"
-              onClick={() => setPage("user-casino")}
+              onClick={() => setPage("user-games")}
               className="hover:text-gold transition-colors"
-              data-ocid="footer.casino_link"
+              data-ocid="footer.games_link"
             >
-              Casino
+              Games
             </button>
             <button
               type="button"
-              onClick={() => setPage("user-crash")}
+              onClick={() => setPage("user-bets")}
               className="hover:text-gold transition-colors"
-              data-ocid="footer.crash_link"
+              data-ocid="footer.bets_link"
             >
-              Crash
+              My Bets
             </button>
             <button
               type="button"
