@@ -4,8 +4,10 @@ import { type Page, useStore } from "@/store/useStore";
 import {
   ClipboardList,
   Crown,
+  Dices,
   LogOut,
   Menu,
+  Rocket,
   ShieldCheck,
   TrendingUp,
   Users,
@@ -35,6 +37,8 @@ export function AdminLayout({
     { label: "Markets", page: "admin-markets", icon: TrendingUp },
     { label: "Users", page: "admin-users", icon: Users },
     { label: "Bets", page: "admin-bets", icon: ClipboardList },
+    { label: "Casino Control", page: "admin-casino", icon: Dices },
+    { label: "Crash Control", page: "admin-crash", icon: Rocket },
   ];
 
   const navItems = [...baseNavItems, ...extraNavItems];

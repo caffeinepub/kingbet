@@ -59,13 +59,18 @@ export interface Bet {
 }
 
 export type Page =
+  | "landing"
   | "login"
   | "user-markets"
   | "user-bets"
   | "user-account"
+  | "user-casino"
+  | "user-crash"
   | "admin-markets"
   | "admin-users"
   | "admin-bets"
+  | "admin-casino"
+  | "admin-crash"
   | "superadmin-dashboard"
   | "superadmin-admins";
 
@@ -358,7 +363,7 @@ export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
       currentUser: null,
-      currentPage: "login",
+      currentPage: "landing",
       users: initialUsers,
       markets: initialMarkets,
       bets: initialBets,
@@ -373,7 +378,7 @@ export const useStore = create<AppState>()(
         );
         if (!user) return false;
 
-        let page: Page = "login";
+        let page: Page = "landing";
         if (user.role === "user") page = "user-markets";
         else if (user.role === "admin") page = "admin-markets";
         else if (user.role === "superadmin") page = "superadmin-dashboard";
@@ -383,7 +388,7 @@ export const useStore = create<AppState>()(
       },
 
       logout: () => {
-        set({ currentUser: null, currentPage: "login", betSlip: null });
+        set({ currentUser: null, currentPage: "landing", betSlip: null });
       },
 
       setPage: (page) => set({ currentPage: page }),
@@ -619,6 +624,7 @@ export const useStore = create<AppState>()(
         users: state.users,
         markets: state.markets,
         bets: state.bets,
+        currentUser: state.currentUser,
       }),
     },
   ),

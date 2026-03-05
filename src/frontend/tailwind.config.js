@@ -17,6 +17,7 @@ export default {
     extend: {
       fontFamily: {
         display: ["'Cabinet Grotesk'", "'Outfit'", "ui-sans-serif", "system-ui", "sans-serif"],
+        hero: ["'Fraunces'", "'Cabinet Grotesk'", "ui-serif", "serif"],
         body: ["'Outfit'", "'Cabinet Grotesk'", "ui-sans-serif", "system-ui", "sans-serif"],
         mono: ["'JetBrains Mono'", "ui-monospace", "monospace"],
       },
@@ -40,6 +41,9 @@ export default {
           DEFAULT: "oklch(var(--gold))",
           light: "oklch(var(--gold-light))",
           dark: "oklch(var(--gold-dark))",
+        },
+        saffron: {
+          DEFAULT: "oklch(var(--saffron))",
         },
         primary: {
           DEFAULT: "oklch(var(--primary) / <alpha-value>)",

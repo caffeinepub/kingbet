@@ -2,13 +2,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useStore } from "@/store/useStore";
-import { AlertCircle, Crown, Eye, EyeOff, LogIn } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  Crown,
+  Eye,
+  EyeOff,
+  LogIn,
+} from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
 import { SiWhatsapp } from "react-icons/si";
 
 export function LoginPage() {
   const login = useStore((s) => s.login);
+  const setPage = useStore((s) => s.setPage);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -36,6 +44,16 @@ export function LoginPage() {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4 relative overflow-hidden">
+      {/* Back to Home */}
+      <button
+        type="button"
+        onClick={() => setPage("landing")}
+        className="absolute top-4 left-4 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-gold transition-colors"
+        data-ocid="login.back_to_home_button"
+      >
+        <ArrowLeft className="w-4 h-4" />
+        Back to Home
+      </button>
       {/* Background decorative elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div

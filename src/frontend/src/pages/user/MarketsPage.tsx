@@ -1,8 +1,11 @@
+import type { Market as BackendMarket } from "@/backend";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useActor } from "@/hooks/useActor";
 import { type Market, type SportType, useStore } from "@/store/useStore";
 import { Circle, Trophy, Zap } from "lucide-react";
 import { motion } from "motion/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const SPORT_TABS = [
   { label: "ALL", value: "all" },
@@ -27,6 +30,37 @@ function formatVolume(n: number) {
   if (n >= 1000000) return `₹${(n / 1000000).toFixed(1)}M`;
   if (n >= 1000) return `₹${(n / 1000).toFixed(0)}K`;
   return `₹${n}`;
+}
+
+// Convert backend Market to local Market format
+function convertBackendMarket(bm: BackendMarket): Market {
+  const selections = bm.selections.map((name, i) => {
+    const backOdds = bm.odds[0]?.[i] ? Number(bm.odds[0][i]) / 100 : 2.0;
+    const layOdds = bm.odds[1]?.[i] ? Number(bm.odds[1][i]) / 100 : 2.05;
+    return {
+      id: `${bm.id}-${i}`,
+      name,
+      backOdds,
+      layOdds,
+      backVolume: Math.floor(Math.random() * 500000 + 50000),
+      layVolume: Math.floor(Math.random() * 400000 + 40000),
+    };
+  });
+
+  return {
+    id: String(bm.id),
+    sport: (bm.sport as SportType) ?? "cricket",
+    eventName: bm.event,
+    description: bm.sport,
+    selections,
+    status:
+      bm.status === "open"
+        ? "open"
+        : bm.status === "settled"
+          ? "settled"
+          : "closed",
+    createdAt: new Date().toISOString(),
+  };
 }
 
 interface SelectionRowProps {
@@ -232,9 +266,71 @@ function MarketCard({ market, index }: MarketCardProps) {
   );
 }
 
+function MarketSkeleton() {
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <div className="px-4 py-3 border-b border-border bg-secondary/50">
+        <div className="flex items-center gap-2">
+          <Skeleton className="w-6 h-6 rounded" />
+          <div className="space-y-1.5">
+            <Skeleton className="w-16 h-3" />
+            <Skeleton className="w-40 h-4" />
+          </div>
+        </div>
+      </div>
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className="flex items-center justify-between px-4 py-3 border-b border-border/50"
+        >
+          <Skeleton className="w-24 h-4" />
+          <div className="flex gap-2">
+            <Skeleton className="w-16 h-12 rounded-lg" />
+            <Skeleton className="w-16 h-12 rounded-lg" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function MarketsPage() {
-  const markets = useStore((s) => s.markets);
+  const storeMarkets = useStore((s) => s.markets);
+  const { actor } = useActor();
+  const [markets, setMarkets] = useState<Market[]>(storeMarkets);
   const [sportFilter, setSportFilter] = useState<string>("all");
+  const [firstLoad, setFirstLoad] = useState(true);
+  const pollRef = useRef<ReturnType<typeof setInterval>>(null);
+
+  useEffect(() => {
+    const fetchMarkets = async () => {
+      if (!actor) return;
+      try {
+        const backendMarkets = await actor.getMarkets();
+        if (backendMarkets.length > 0) {
+          setMarkets(backendMarkets.map(convertBackendMarket));
+        }
+      } catch {
+        // Use store markets as fallback
+      } finally {
+        setFirstLoad(false);
+      }
+    };
+
+    fetchMarkets();
+    pollRef.current = setInterval(fetchMarkets, 5000);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [actor]);
+
+  // When actor not yet available, use store markets
+  useEffect(() => {
+    if (!actor) {
+      setMarkets(storeMarkets);
+      setFirstLoad(false);
+    }
+  }, [actor, storeMarkets]);
 
   const filteredMarkets = markets.filter(
     (m) => sportFilter === "all" || m.sport === sportFilter,
@@ -313,7 +409,13 @@ export function MarketsPage() {
       </div>
 
       {/* Market Cards */}
-      {filteredMarkets.length === 0 ? (
+      {firstLoad ? (
+        <div className="space-y-3">
+          {[0, 1, 2].map((i) => (
+            <MarketSkeleton key={i} />
+          ))}
+        </div>
+      ) : filteredMarkets.length === 0 ? (
         <div
           data-ocid="markets.empty_state"
           className="flex flex-col items-center justify-center py-16 text-center"
