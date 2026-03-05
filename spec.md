@@ -1,38 +1,38 @@
 # KINGBET
 
 ## Current State
-New project. No existing code.
+- Frontend-only app with React + Zustand store
+- Markets page shows hardcoded static cricket/football/tennis markets with mock odds
+- Odds drift is simulated locally via `updateFancyOdds` interval
+- LandingPage sports preview uses hardcoded mock data
+- No external API integration exists
 
 ## Requested Changes (Diff)
 
 ### Add
-- Full-stack betting exchange platform
-- Role-based access: Super Admin, Admin, User
-- Betting engine with Back/Lay order matching
-- Markets for Cricket, Football, Tennis
-- Login page with WhatsApp "Get ID" flow
-- Role-based dashboards for each user type
+- `oddsService.ts` utility that calls TheOddsAPI (key: `a231ad9c198d20afdf0315d0eae4d7a2`) to fetch:
+  - In-season sports list (cricket, soccer, tennis)
+  - Upcoming + live events with Back/Lay-style odds (h2h markets)
+- Auto-polling every 2 seconds on MarketsPage for live odds refresh
+- Live sports preview on LandingPage using real API data
 
 ### Modify
-- N/A
+- `MarketsPage.tsx` — replace static store markets with live API data; keep fallback to store data if API fails or rate-limited
+- `LandingPage.tsx` — live sports preview section now fetches real upcoming matches from TheOddsAPI
 
 ### Remove
-- N/A
+- Nothing removed; mock data kept as fallback
 
 ## Implementation Plan
-
-### Backend (Motoko)
-- User management: register, login (username/password), roles (superadmin, admin, user)
-- Market management: create/update/suspend/close markets with sport type, event name, odds
-- Betting engine: place Back/Lay bets, order matching logic, bet settlement
-- Wallet: user balance, deposit/withdraw (admin-controlled), P&L tracking
-- Admin controls: manage users, set credit limits, suspend accounts
-
-### Frontend (React)
-- Login page with username/password form and WhatsApp "Get ID" CTA button
-- Super Admin dashboard: manage admins, view all bets, system stats
-- Admin dashboard: manage users, view user bets, set credit limits
-- User dashboard: browse open markets, place Back/Lay bets, view bet history, wallet balance
-- Market listing: Cricket / Football / Tennis tabs with live odds display
-- Bet slip: order entry for Back (blue) and Lay (pink) with stake/odds inputs
-- Dark premium UI theme throughout
+1. Create `src/frontend/src/utils/oddsService.ts`:
+   - `fetchSports()` — GET /v4/sports with apiKey
+   - `fetchOdds(sport, markets, regions)` — GET /v4/sports/{sport}/odds
+   - Map API response to internal `Market` type with Back (bestBack) and Lay (bestBack + 0.02) odds derived from bookmaker data
+2. Update `MarketsPage.tsx`:
+   - On mount, call `oddsService.fetchOdds` for cricket_international, soccer_epl, tennis_atp
+   - Poll every 2 seconds using setInterval
+   - Map API `Event` objects to `Market[]` format
+   - Show API data when available; fall back to store markets on error
+3. Update `LandingPage.tsx`:
+   - Fetch top 3 upcoming events from API on mount
+   - Show match name, teams, and live back odds in the preview cards

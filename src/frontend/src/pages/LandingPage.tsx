@@ -6,11 +6,13 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import type { Market, Page, SportType } from "@/store/useStore";
 import { useStore } from "@/store/useStore";
+import { fetchPreviewEvents } from "@/utils/oddsService";
 import {
   ChevronRight,
   Crown,
-  MessageCircle,
   Shield,
   TrendingUp,
   Wallet,
@@ -149,6 +151,352 @@ function SectionHeader({
         </p>
       )}
     </motion.div>
+  );
+}
+
+const SPORT_ICONS: Record<SportType, string> = {
+  cricket: "🏏",
+  football: "⚽",
+  tennis: "🎾",
+};
+
+const SPORT_COLORS: Record<SportType, string> = {
+  cricket: "oklch(var(--saffron))",
+  football: "oklch(0.55 0.18 240)",
+  tennis: "oklch(0.72 0.18 60)",
+};
+
+// Fallback mock cards when API returns empty
+const FALLBACK_MARKETS = [
+  {
+    id: "fallback-1",
+    sport: "cricket" as SportType,
+    eventName: "IND vs AUS — 3rd Test",
+    description: "MCG • Day 2",
+    featured: true,
+    selections: [
+      {
+        id: "f1-1",
+        name: "India",
+        backOdds: 1.85,
+        layOdds: 1.87,
+        backVolume: 2400000,
+        layVolume: 1800000,
+      },
+      {
+        id: "f1-2",
+        name: "Australia",
+        backOdds: 2.1,
+        layOdds: 2.12,
+        backVolume: 2100000,
+        layVolume: 1600000,
+      },
+      {
+        id: "f1-3",
+        name: "Draw",
+        backOdds: 3.5,
+        layOdds: 3.55,
+        backVolume: 800000,
+        layVolume: 600000,
+      },
+    ],
+    status: "open" as const,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "fallback-2",
+    sport: "football" as SportType,
+    eventName: "Man City vs Arsenal",
+    description: "EPL • Matchday 30",
+    featured: false,
+    selections: [
+      {
+        id: "f2-1",
+        name: "Man City",
+        backOdds: 1.65,
+        layOdds: 1.67,
+        backVolume: 1800000,
+        layVolume: 1400000,
+      },
+      {
+        id: "f2-2",
+        name: "Arsenal",
+        backOdds: 2.4,
+        layOdds: 2.42,
+        backVolume: 1200000,
+        layVolume: 900000,
+      },
+      {
+        id: "f2-3",
+        name: "Draw",
+        backOdds: 3.2,
+        layOdds: 3.25,
+        backVolume: 700000,
+        layVolume: 500000,
+      },
+    ],
+    status: "open" as const,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "fallback-3",
+    sport: "tennis" as SportType,
+    eventName: "Djokovic vs Alcaraz",
+    description: "Wimbledon Final",
+    featured: false,
+    selections: [
+      {
+        id: "f3-1",
+        name: "Djokovic",
+        backOdds: 1.75,
+        layOdds: 1.77,
+        backVolume: 3100000,
+        layVolume: 2400000,
+      },
+      {
+        id: "f3-2",
+        name: "Alcaraz",
+        backOdds: 2.05,
+        layOdds: 2.07,
+        backVolume: 2800000,
+        layVolume: 2100000,
+      },
+    ],
+    status: "open" as const,
+    createdAt: new Date().toISOString(),
+  },
+];
+
+function formatPreviewVolume(n: number) {
+  if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
+  if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
+  if (n >= 1000) return `₹${(n / 1000).toFixed(0)}K`;
+  return `₹${n}`;
+}
+
+function LiveSportsPreview({ setPage }: { setPage: (page: Page) => void }) {
+  const [previewMarkets, setPreviewMarkets] = useState<Market[] | null>(null);
+  const [isApiData, setIsApiData] = useState(false);
+
+  useEffect(() => {
+    fetchPreviewEvents(3)
+      .then((markets) => {
+        if (markets.length > 0) {
+          setPreviewMarkets(markets);
+          setIsApiData(true);
+        } else {
+          setPreviewMarkets(FALLBACK_MARKETS as unknown as Market[]);
+          setIsApiData(false);
+        }
+      })
+      .catch(() => {
+        setPreviewMarkets(FALLBACK_MARKETS as unknown as Market[]);
+        setIsApiData(false);
+      });
+  }, []);
+
+  const displayMarkets = previewMarkets ?? null;
+
+  return (
+    <section id="sports" className="py-16 px-4">
+      <div className="max-w-7xl mx-auto">
+        <SectionHeader
+          title="Live Sports Markets"
+          subtitle="Back or Lay on your favourite teams with real-time exchange odds"
+        />
+
+        {/* API data badge */}
+        {isApiData && (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center justify-center gap-2 mb-6"
+          >
+            <span
+              className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1 rounded-full border"
+              style={{
+                background: "oklch(0.55 0.18 240 / 0.12)",
+                color: "oklch(0.55 0.18 240)",
+                borderColor: "oklch(0.55 0.18 240 / 0.3)",
+              }}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse inline-block" />
+              Live odds via TheOddsAPI
+            </span>
+          </motion.div>
+        )}
+
+        <div className="grid md:grid-cols-3 gap-5">
+          {displayMarkets === null
+            ? // Loading skeletons
+              [0, 1, 2].map((i) => (
+                <div
+                  key={i}
+                  className="rounded-xl border border-border overflow-hidden"
+                  style={{ background: "oklch(var(--card))" }}
+                >
+                  <div className="p-4 border-b border-border">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Skeleton className="w-6 h-6 rounded" />
+                      <div className="space-y-1.5">
+                        <Skeleton className="w-20 h-3" />
+                        <Skeleton className="w-36 h-4" />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="p-4 space-y-2">
+                    {[0, 1, 2].map((j) => (
+                      <div key={j} className="flex items-center gap-2">
+                        <Skeleton className="flex-1 h-4" />
+                        <Skeleton className="w-14 h-8 rounded" />
+                        <Skeleton className="w-14 h-8 rounded" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))
+            : displayMarkets.slice(0, 3).map((market, i) => {
+                const isFeatured = i === 0;
+                const totalVol = market.selections.reduce(
+                  (s, sel) => s + sel.backVolume,
+                  0,
+                );
+                return (
+                  <motion.div
+                    key={market.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: i * 0.1 }}
+                    className={`rounded-xl border overflow-hidden transition-all duration-300 hover:translate-y-[-3px] ${
+                      isFeatured
+                        ? "border-saffron/40 shadow-lg"
+                        : "border-border hover:border-gold/30"
+                    }`}
+                    style={{
+                      background: "oklch(var(--card))",
+                      boxShadow: isFeatured
+                        ? "0 8px 32px oklch(var(--saffron) / 0.15)"
+                        : undefined,
+                    }}
+                    data-ocid={`sports.market_card.${i + 1}`}
+                  >
+                    {isFeatured && (
+                      <div
+                        className="text-center py-1.5 text-xs font-bold tracking-wider text-background"
+                        style={{
+                          background:
+                            "linear-gradient(90deg, oklch(var(--saffron)), oklch(var(--gold)))",
+                        }}
+                      >
+                        ⭐ FEATURED MATCH
+                      </div>
+                    )}
+                    <div className="p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">
+                            {SPORT_ICONS[market.sport]}
+                          </span>
+                          <div>
+                            <p
+                              className="text-xs font-semibold"
+                              style={{ color: SPORT_COLORS[market.sport] }}
+                            >
+                              {market.description}
+                            </p>
+                            <p className="text-sm font-bold text-foreground">
+                              {market.eventName}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          <Badge
+                            className="text-[10px] font-bold"
+                            style={{
+                              background: "oklch(0.65 0.18 145 / 0.2)",
+                              color: "oklch(0.65 0.18 145)",
+                              border: "1px solid oklch(0.65 0.18 145 / 0.4)",
+                            }}
+                          >
+                            ● LIVE
+                          </Badge>
+                          <span className="text-[10px] text-muted-foreground">
+                            Vol: {formatPreviewVolume(totalVol)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-[1fr_64px_64px] gap-1 text-[10px] text-center">
+                          <div />
+                          <div
+                            style={{ color: "oklch(var(--back))" }}
+                            className="font-bold"
+                          >
+                            BACK
+                          </div>
+                          <div
+                            style={{ color: "oklch(var(--lay))" }}
+                            className="font-bold"
+                          >
+                            LAY
+                          </div>
+                        </div>
+                        {market.selections.slice(0, 3).map((sel) => (
+                          <div
+                            key={sel.id}
+                            className="grid grid-cols-[1fr_64px_64px] gap-1 items-center"
+                          >
+                            <span className="text-xs text-foreground font-medium truncate">
+                              {sel.name}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setPage("login")}
+                              className="rounded py-1.5 text-xs font-bold font-mono transition-all hover:brightness-110"
+                              style={{
+                                background: "oklch(var(--back) / 0.15)",
+                                color: "oklch(var(--back))",
+                                border: "1px solid oklch(var(--back) / 0.3)",
+                              }}
+                            >
+                              {sel.backOdds.toFixed(2)}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPage("login")}
+                              className="rounded py-1.5 text-xs font-bold font-mono transition-all hover:brightness-110"
+                              style={{
+                                background: "oklch(var(--lay) / 0.15)",
+                                color: "oklch(var(--lay))",
+                                border: "1px solid oklch(var(--lay) / 0.3)",
+                              }}
+                            >
+                              {sel.layOdds.toFixed(2)}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
+        </div>
+
+        <div className="text-center mt-8">
+          <Button
+            onClick={() => setPage("login")}
+            variant="outline"
+            className="border-gold/40 text-gold hover:bg-gold/10"
+            data-ocid="sports.view_all_button"
+          >
+            View All Markets
+            <ChevronRight className="w-4 h-4 ml-1" />
+          </Button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -511,182 +859,7 @@ export function LandingPage() {
       </section>
 
       {/* ── Live Sports Preview ── */}
-      <section id="sports" className="py-16 px-4">
-        <div className="max-w-7xl mx-auto">
-          <SectionHeader
-            title="Live Sports Markets"
-            subtitle="Back or Lay on your favourite teams with real-time exchange odds"
-          />
-
-          <div className="grid md:grid-cols-3 gap-5">
-            {[
-              {
-                sport: "cricket",
-                icon: "🏏",
-                event: "IND vs AUS - 3rd Test",
-                desc: "MCG • Day 2",
-                featured: true,
-                selections: [
-                  { name: "India", back: "1.85", lay: "1.87" },
-                  { name: "Australia", back: "2.10", lay: "2.12" },
-                  { name: "Draw", back: "3.50", lay: "3.55" },
-                ],
-                volume: "₹2.4Cr",
-              },
-              {
-                sport: "football",
-                icon: "⚽",
-                event: "Man City vs Arsenal",
-                desc: "EPL • Matchday 30",
-                featured: false,
-                selections: [
-                  { name: "Man City", back: "1.65", lay: "1.67" },
-                  { name: "Arsenal", back: "2.40", lay: "2.42" },
-                  { name: "Draw", back: "3.20", lay: "3.25" },
-                ],
-                volume: "₹1.8Cr",
-              },
-              {
-                sport: "tennis",
-                icon: "🎾",
-                event: "Djokovic vs Alcaraz",
-                desc: "Wimbledon Final",
-                featured: false,
-                selections: [
-                  { name: "Djokovic", back: "1.75", lay: "1.77" },
-                  { name: "Alcaraz", back: "2.05", lay: "2.07" },
-                ],
-                volume: "₹3.1Cr",
-              },
-            ].map((market, i) => (
-              <motion.div
-                key={market.event}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.1 }}
-                className={`rounded-xl border overflow-hidden transition-all duration-300 hover:translate-y-[-3px] ${
-                  market.featured
-                    ? "border-saffron/40 shadow-lg"
-                    : "border-border hover:border-gold/30"
-                }`}
-                style={{
-                  background: "oklch(var(--card))",
-                  boxShadow: market.featured
-                    ? "0 8px 32px oklch(var(--saffron) / 0.15)"
-                    : undefined,
-                }}
-              >
-                {market.featured && (
-                  <div
-                    className="text-center py-1.5 text-xs font-bold tracking-wider text-background"
-                    style={{
-                      background:
-                        "linear-gradient(90deg, oklch(var(--saffron)), oklch(var(--gold)))",
-                    }}
-                  >
-                    ⭐ FEATURED MATCH
-                  </div>
-                )}
-                <div className="p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xl">{market.icon}</span>
-                      <div>
-                        <p className="text-xs text-muted-foreground">
-                          {market.desc}
-                        </p>
-                        <p className="text-sm font-bold text-foreground">
-                          {market.event}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <Badge
-                        className="text-[10px] font-bold"
-                        style={{
-                          background: "oklch(0.65 0.18 145 / 0.2)",
-                          color: "oklch(0.65 0.18 145)",
-                          border: "1px solid oklch(0.65 0.18 145 / 0.4)",
-                        }}
-                      >
-                        ● LIVE
-                      </Badge>
-                      <span className="text-[10px] text-muted-foreground">
-                        Vol: {market.volume}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-[1fr_64px_64px] gap-1 text-[10px] text-center">
-                      <div />
-                      <div
-                        style={{ color: "oklch(var(--back))" }}
-                        className="font-bold"
-                      >
-                        BACK
-                      </div>
-                      <div
-                        style={{ color: "oklch(var(--lay))" }}
-                        className="font-bold"
-                      >
-                        LAY
-                      </div>
-                    </div>
-                    {market.selections.map((sel) => (
-                      <div
-                        key={sel.name}
-                        className="grid grid-cols-[1fr_64px_64px] gap-1 items-center"
-                      >
-                        <span className="text-xs text-foreground font-medium truncate">
-                          {sel.name}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setPage("login")}
-                          className="rounded py-1.5 text-xs font-bold font-mono transition-all hover:brightness-110"
-                          style={{
-                            background: "oklch(var(--back) / 0.15)",
-                            color: "oklch(var(--back))",
-                            border: "1px solid oklch(var(--back) / 0.3)",
-                          }}
-                        >
-                          {sel.back}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPage("login")}
-                          className="rounded py-1.5 text-xs font-bold font-mono transition-all hover:brightness-110"
-                          style={{
-                            background: "oklch(var(--lay) / 0.15)",
-                            color: "oklch(var(--lay))",
-                            border: "1px solid oklch(var(--lay) / 0.3)",
-                          }}
-                        >
-                          {sel.lay}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-
-          <div className="text-center mt-8">
-            <Button
-              onClick={() => setPage("login")}
-              variant="outline"
-              className="border-gold/40 text-gold hover:bg-gold/10"
-              data-ocid="sports.view_all_button"
-            >
-              View All Markets
-              <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
-          </div>
-        </div>
-      </section>
+      <LiveSportsPreview setPage={setPage} />
 
       {/* ── Live Casino Preview ── */}
       <section

@@ -202,9 +202,40 @@ function BetList({ bets }: { bets: CrashBet[] }) {
   );
 }
 
+// ─── Local Aviator simulation (auto-loop when backend not connected) ───────────
+type LocalRoundStatus = "waiting" | "running" | "crashed";
+
+interface LocalRound {
+  id: number;
+  status: LocalRoundStatus;
+  crashPoint: number; // actual multiplier e.g. 2.34
+  startTime: number; // Date.now() ms
+}
+
+function generateCrashPoint(): number {
+  // Provably-fair-style: house edge ~4%, min 1.00
+  const r = Math.random();
+  if (r < 0.04) return 1.0; // instant crash
+  return Math.max(1.0, Math.floor(100 / (1 - r * 0.96)) / 100);
+}
+
 // ─── Aviator Game ──────────────────────────────────────────────────────────────
 function AviatorGame() {
   const { actor } = useActor();
+  const { currentUser, debitUserBalance, creditUserBalance } = useStore();
+
+  // Local simulation state (used when backend not available)
+  const [localRound, setLocalRound] = useState<LocalRound>(() => ({
+    id: 1,
+    status: "waiting",
+    crashPoint: generateCrashPoint(),
+    startTime: 0,
+  }));
+  const [_countdown, setCountdown] = useState(5); // seconds before round starts
+  const localBetRef = useRef<{ stake: number; autoCashout: number } | null>(
+    null,
+  );
+  const roundLoopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [activeRound, setActiveRound] = useState<CrashRound | null>(null);
   const [bets, setBets] = useState<CrashBet[]>([]);
@@ -215,9 +246,10 @@ function AviatorGame() {
   const [hasPlacedBet, setHasPlacedBet] = useState(false);
   const [placing, setPlacing] = useState(false);
   const [cashingOut, setCashingOut] = useState(false);
+  const [backendConnected, setBackendConnected] = useState(false);
 
-  const pollRef = useRef<ReturnType<typeof setInterval>>(null);
-  const multRef = useRef<ReturnType<typeof setInterval>>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const multRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchRoundData = useCallback(async () => {
     if (!actor) return;
@@ -230,6 +262,7 @@ function AviatorGame() {
       const round =
         Array.isArray(result) && result.length > 0 ? result[0] : null;
       setActiveRound(round ?? null);
+      setBackendConnected(true);
 
       if (round) {
         const roundBets = await (
@@ -250,10 +283,110 @@ function AviatorGame() {
       setHistory(hist.slice(0, 15));
     } catch {
       // backend not connected — use local simulation
+      setBackendConnected(false);
     }
   }, [actor]);
 
+  // ── Local round loop ────────────────────────────────────────────────────────
+  const startLocalLoop = useCallback(() => {
+    const BETTING_WINDOW = 5000; // 5s betting phase
+    const TICK = 100;
+
+    setLocalRound((prev) => ({
+      ...prev,
+      status: "waiting",
+      crashPoint: generateCrashPoint(),
+      startTime: 0,
+    }));
+    setMultiplier(1.0);
+    setCountdown(Math.ceil(BETTING_WINDOW / 1000));
+    setHasPlacedBet(false);
+    localBetRef.current = null;
+
+    // Countdown ticks
+    let remaining = BETTING_WINDOW;
+    const countdownTick = setInterval(() => {
+      remaining -= 500;
+      setCountdown(Math.max(0, Math.ceil(remaining / 1000)));
+      if (remaining <= 0) clearInterval(countdownTick);
+    }, 500);
+
+    // After betting window, start flying
+    roundLoopRef.current = setTimeout(() => {
+      clearInterval(countdownTick);
+      const startTime = Date.now();
+
+      setLocalRound((prev) => ({ ...prev, status: "running", startTime }));
+
+      let crashed = false;
+      const flyTick = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const m = Math.exp(0.00006 * Math.max(0, elapsed));
+        setMultiplier(m);
+
+        setLocalRound((prev) => {
+          if (crashed) return prev;
+          // Check auto-cashout for local bet
+          const bet = localBetRef.current;
+          if (bet && bet.autoCashout > 0 && m >= bet.autoCashout) {
+            const payout = Number.parseFloat(
+              (bet.stake * bet.autoCashout).toFixed(2),
+            );
+            creditUserBalance(currentUser?.id ?? "", payout);
+            localBetRef.current = null;
+            toast.success(
+              `Auto cash out at ${bet.autoCashout.toFixed(2)}x! +₹${payout}`,
+            );
+          }
+          // Check crash
+          if (m >= prev.crashPoint) {
+            crashed = true;
+            clearInterval(flyTick);
+            const finalM = prev.crashPoint;
+            setMultiplier(finalM);
+            // settle any remaining local bet as lost
+            localBetRef.current = null;
+            const newRound = { ...prev, status: "crashed" as LocalRoundStatus };
+            setHistory((h) => [
+              {
+                id: BigInt(prev.id),
+                crashPoint: BigInt(Math.round(finalM * 100)),
+                status: "crashed",
+                startTime: BigInt(startTime * 1_000_000),
+              },
+              ...h.slice(0, 14),
+            ]);
+            // schedule next round after 3s pause
+            roundLoopRef.current = setTimeout(startLocalLoop, 3000);
+            return newRound;
+          }
+          return prev;
+        });
+      }, TICK);
+    }, BETTING_WINDOW);
+  }, [creditUserBalance, currentUser?.id]);
+
+  // Start local loop on mount (always, as fallback shown before backend check)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: startLocalLoop is stable on mount; re-running on change would restart the loop unexpectedly
   useEffect(() => {
+    startLocalLoop();
+    return () => {
+      if (roundLoopRef.current) clearTimeout(roundLoopRef.current);
+      if (multRef.current) clearInterval(multRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    fetchRoundData();
+    pollRef.current = setInterval(fetchRoundData, 2000);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [fetchRoundData]);
+
+  // Backend round multiplier animation
+  useEffect(() => {
+    if (!backendConnected) return;
     if (multRef.current) clearInterval(multRef.current);
 
     if (activeRound?.status === "running") {
@@ -272,16 +405,7 @@ function AviatorGame() {
     return () => {
       if (multRef.current) clearInterval(multRef.current);
     };
-  }, [activeRound]);
-
-  useEffect(() => {
-    fetchRoundData();
-    pollRef.current = setInterval(fetchRoundData, 2000);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-      if (multRef.current) clearInterval(multRef.current);
-    };
-  }, [fetchRoundData]);
+  }, [activeRound, backendConnected]);
 
   const prevRoundId = useRef<bigint | null>(null);
   useEffect(() => {
@@ -292,6 +416,25 @@ function AviatorGame() {
   }, [activeRound]);
 
   const handlePlaceBet = async () => {
+    // Local simulation path
+    if (!backendConnected) {
+      if (!currentUser) return toast.error("Please login to play");
+      if (stake <= 0) return toast.error("Enter a valid stake");
+      if (currentUser.balance < stake)
+        return toast.error(
+          `Insufficient balance. You have ₹${currentUser.balance.toFixed(2)}`,
+        );
+      if (localRound.status !== "waiting")
+        return toast.error("Betting phase is over for this round");
+      debitUserBalance(currentUser.id, stake);
+      localBetRef.current = { stake, autoCashout };
+      setHasPlacedBet(true);
+      toast.success(`Bet placed: ₹${stake}`, {
+        description: `Auto cashout: ${autoCashout}x`,
+      });
+      return;
+    }
+
     if (!actor || !activeRound) return;
     if (stake <= 0) return toast.error("Enter a valid stake");
 
@@ -323,6 +466,19 @@ function AviatorGame() {
   };
 
   const handleCashOut = async () => {
+    // Local simulation path
+    if (!backendConnected) {
+      if (!localBetRef.current) return;
+      const payout = Number.parseFloat(
+        (localBetRef.current.stake * multiplier).toFixed(2),
+      );
+      creditUserBalance(currentUser?.id ?? "", payout);
+      localBetRef.current = null;
+      setHasPlacedBet(false);
+      toast.success(`Cashed out at ${multiplier.toFixed(2)}x! +₹${payout}`);
+      return;
+    }
+
     if (!actor || !activeRound) return;
     setCashingOut(true);
     try {
@@ -341,7 +497,9 @@ function AviatorGame() {
     }
   };
 
-  const status = activeRound?.status ?? "waiting";
+  // Determine effective status from local or backend
+  const effectiveRound = backendConnected ? activeRound : localRound;
+  const status: string = effectiveRound?.status ?? "waiting";
   const canPlaceBet = status === "waiting" && !hasPlacedBet;
   const canCashOut = status === "running" && hasPlacedBet;
 

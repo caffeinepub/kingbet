@@ -29,6 +29,37 @@ export interface Selection {
   layVolume: number;
 }
 
+// Fancy / Session betting types
+export interface FancyMarket {
+  id: string;
+  matchId: string;
+  type: "fancy" | "session";
+  title: string; // e.g. "Virat Kohli Runs" or "1-6 Over Runs"
+  yesOdds: number; // paise / 100 → actual back odds for YES
+  noOdds: number;
+  yesRuns: number; // run line for YES
+  noRuns: number; // run line for NO
+  minBet: number;
+  maxBet: number;
+  status: "open" | "suspended" | "settled";
+  result?: number; // actual runs scored
+}
+
+export interface FancyBet {
+  id: string;
+  userId: string;
+  fancyId: string;
+  fancyTitle: string;
+  matchName: string;
+  side: "yes" | "no";
+  runs: number;
+  odds: number; // stored in paise (e.g. 95 = 0.95x profit)
+  stake: number;
+  payout: number;
+  status: "open" | "won" | "lost" | "void";
+  placedAt: string;
+}
+
 export interface Market {
   id: string;
   sport: SportType;
@@ -94,6 +125,8 @@ interface AppState {
   users: User[];
   markets: Market[];
   bets: Bet[];
+  fancyMarkets: FancyMarket[];
+  fancyBets: FancyBet[];
 
   // BetSlip
   betSlip: BetSlipState | null;
@@ -112,6 +145,14 @@ interface AppState {
 
   // Actions - Betting
   placeBet: () => { success: boolean; message: string };
+
+  // Actions - Fancy
+  placeFancyBet: (params: {
+    fancyId: string;
+    side: "yes" | "no";
+    stake: number;
+  }) => { success: boolean; message: string };
+  updateFancyOdds: () => void;
 
   // Actions - Admin
   createMarket: (market: Omit<Market, "id" | "createdAt" | "status">) => void;
@@ -308,6 +349,115 @@ const initialMarkets: Market[] = [
   },
 ];
 
+const initialFancyMarkets: FancyMarket[] = [
+  // IND vs AUS fancy markets
+  {
+    id: "f1",
+    matchId: "m1",
+    type: "fancy",
+    title: "India Total Runs",
+    yesOdds: 95,
+    noOdds: 97,
+    yesRuns: 320,
+    noRuns: 320,
+    minBet: 100,
+    maxBet: 50000,
+    status: "open",
+  },
+  {
+    id: "f2",
+    matchId: "m1",
+    type: "fancy",
+    title: "Virat Kohli Runs",
+    yesOdds: 92,
+    noOdds: 95,
+    yesRuns: 65,
+    noRuns: 65,
+    minBet: 100,
+    maxBet: 25000,
+    status: "open",
+  },
+  {
+    id: "f3",
+    matchId: "m1",
+    type: "fancy",
+    title: "Rohit Sharma Runs",
+    yesOdds: 90,
+    noOdds: 93,
+    yesRuns: 45,
+    noRuns: 45,
+    minBet: 100,
+    maxBet: 25000,
+    status: "open",
+  },
+  {
+    id: "f4",
+    matchId: "m1",
+    type: "fancy",
+    title: "India 1st Innings Wkts",
+    yesOdds: 88,
+    noOdds: 92,
+    yesRuns: 6,
+    noRuns: 6,
+    minBet: 100,
+    maxBet: 10000,
+    status: "open",
+  },
+  // Session markets for IND vs AUS
+  {
+    id: "s_f1",
+    matchId: "m1",
+    type: "session",
+    title: "1-6 Over Runs (IND)",
+    yesOdds: 94,
+    noOdds: 96,
+    yesRuns: 48,
+    noRuns: 48,
+    minBet: 100,
+    maxBet: 30000,
+    status: "open",
+  },
+  {
+    id: "s_f2",
+    matchId: "m1",
+    type: "session",
+    title: "7-15 Over Runs (IND)",
+    yesOdds: 93,
+    noOdds: 96,
+    yesRuns: 62,
+    noRuns: 62,
+    minBet: 100,
+    maxBet: 30000,
+    status: "open",
+  },
+  {
+    id: "s_f3",
+    matchId: "m1",
+    type: "session",
+    title: "16-20 Over Runs (IND)",
+    yesOdds: 91,
+    noOdds: 94,
+    yesRuns: 54,
+    noRuns: 54,
+    minBet: 100,
+    maxBet: 30000,
+    status: "open",
+  },
+  {
+    id: "s_f4",
+    matchId: "m1",
+    type: "session",
+    title: "Fall of 1st Wkt (IND)",
+    yesOdds: 90,
+    noOdds: 93,
+    yesRuns: 42,
+    noRuns: 42,
+    minBet: 100,
+    maxBet: 20000,
+    status: "suspended",
+  },
+];
+
 const initialBets: Bet[] = [
   {
     id: "b1",
@@ -367,6 +517,8 @@ export const useStore = create<AppState>()(
       users: initialUsers,
       markets: initialMarkets,
       bets: initialBets,
+      fancyMarkets: initialFancyMarkets,
+      fancyBets: [],
       betSlip: null,
 
       login: (username, password) => {
@@ -493,6 +645,81 @@ export const useStore = create<AppState>()(
         return { success: true, message: "Bet placed successfully!" };
       },
 
+      placeFancyBet: ({ fancyId, side, stake }) => {
+        const { currentUser, fancyMarkets, fancyBets, users } = get();
+        if (!currentUser) return { success: false, message: "Not logged in" };
+
+        const fm = fancyMarkets.find((f) => f.id === fancyId);
+        if (!fm) return { success: false, message: "Market not found" };
+        if (fm.status !== "open")
+          return { success: false, message: "Market is suspended" };
+        if (stake < fm.minBet)
+          return { success: false, message: `Minimum bet is ₹${fm.minBet}` };
+        if (stake > fm.maxBet)
+          return { success: false, message: `Maximum bet is ₹${fm.maxBet}` };
+        if (currentUser.balance < stake)
+          return {
+            success: false,
+            message: `Insufficient balance. You have ₹${currentUser.balance.toFixed(2)}`,
+          };
+
+        const odds = side === "yes" ? fm.yesOdds : fm.noOdds;
+        const runs = side === "yes" ? fm.yesRuns : fm.noRuns;
+        // payout = stake * (odds / 100) profit + stake back
+        const payout = Number.parseFloat((stake * (odds / 100)).toFixed(2));
+
+        const newFancyBet: FancyBet = {
+          id: generateId(),
+          userId: currentUser.id,
+          fancyId,
+          fancyTitle: fm.title,
+          matchName: fm.matchId,
+          side,
+          runs,
+          odds,
+          stake,
+          payout,
+          status: "open",
+          placedAt: now(),
+        };
+
+        const updatedUsers = users.map((u) =>
+          u.id === currentUser.id ? { ...u, balance: u.balance - stake } : u,
+        );
+        const updatedCurrentUser = {
+          ...currentUser,
+          balance: currentUser.balance - stake,
+        };
+
+        set({
+          fancyBets: [newFancyBet, ...fancyBets],
+          users: updatedUsers,
+          currentUser: updatedCurrentUser,
+        });
+        return { success: true, message: "Fancy bet placed!" };
+      },
+
+      updateFancyOdds: () => {
+        set((state) => ({
+          fancyMarkets: state.fancyMarkets.map((fm) => {
+            if (fm.status !== "open") return fm;
+            // Simulate small odds drift
+            const drift = () => Math.floor((Math.random() - 0.5) * 4);
+            return {
+              ...fm,
+              yesOdds: Math.min(98, Math.max(70, fm.yesOdds + drift())),
+              noOdds: Math.min(99, Math.max(72, fm.noOdds + drift())),
+              yesRuns:
+                fm.yesRuns +
+                (Math.random() < 0.15 ? (Math.random() < 0.5 ? 1 : -1) : 0),
+              noRuns:
+                fm.noRuns +
+                (Math.random() < 0.15 ? (Math.random() < 0.5 ? 1 : -1) : 0),
+            };
+          }),
+        }));
+      },
+
       createMarket: (marketData) => {
         const newMarket: Market = {
           ...marketData,
@@ -576,7 +803,14 @@ export const useStore = create<AppState>()(
               ? { ...u, balance: Math.max(0, u.balance - amount) }
               : u,
           );
-          return { users: updatedUsers };
+          const updatedCurrentUser =
+            state.currentUser?.id === userId
+              ? {
+                  ...state.currentUser,
+                  balance: Math.max(0, state.currentUser.balance - amount),
+                }
+              : state.currentUser;
+          return { users: updatedUsers, currentUser: updatedCurrentUser };
         });
       },
 
@@ -624,6 +858,7 @@ export const useStore = create<AppState>()(
         users: state.users,
         markets: state.markets,
         bets: state.bets,
+        fancyBets: state.fancyBets,
         currentUser: state.currentUser,
       }),
     },
