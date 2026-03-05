@@ -10,6 +10,49 @@ import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+// Payout multiplier calculation for casino games
+function calculateCasinoPnl(
+  game: string,
+  selectedBet: string,
+  result: string,
+  stake: number,
+): number {
+  const redNums = new Set([
+    1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36,
+  ]);
+
+  if (game === "roulette") {
+    const resultNum = Number.parseInt(result, 10);
+    // Number bet
+    if (/^\d+$/.test(selectedBet)) {
+      if (selectedBet === result) return stake * 35;
+      return -stake;
+    }
+    // Color/even-odd bets
+    const isRed = !Number.isNaN(resultNum) && redNums.has(resultNum);
+    const isEven =
+      !Number.isNaN(resultNum) && resultNum !== 0 && resultNum % 2 === 0;
+    if (selectedBet === "red" && isRed) return stake;
+    if (selectedBet === "black" && !isRed && resultNum !== 0) return stake;
+    if (selectedBet === "even" && isEven) return stake;
+    if (selectedBet === "odd" && !isEven && resultNum !== 0) return stake;
+    return -stake;
+  }
+
+  if (game === "teenpatti") {
+    if (selectedBet === result) return stake * 1.8;
+    return -stake;
+  }
+
+  if (game === "andarbhar" || game === "andarbahar") {
+    if (selectedBet === result && selectedBet === "andar") return stake * 0.9;
+    if (selectedBet === result && selectedBet === "bahar") return stake;
+    return -stake;
+  }
+
+  return -stake;
+}
+
 interface CasinoRound {
   id: bigint;
   game: string;
@@ -261,6 +304,7 @@ interface GamePanelProps {
 function GamePanel({ game, displayName, icon }: GamePanelProps) {
   const { actor } = useActor();
   const currentUser = useStore((s) => s.currentUser);
+  const addCasinoHistory = useStore((s) => s.addCasinoHistory);
 
   const [activeRound, setActiveRound] = useState<CasinoRound | null>(null);
   const [history, setHistory] = useState<CasinoRound[]>([]);
@@ -269,6 +313,10 @@ function GamePanel({ game, displayName, icon }: GamePanelProps) {
   const [placing, setPlacing] = useState(false);
   const [loading, setLoading] = useState(true);
   const pollRef = useRef<ReturnType<typeof setInterval>>(null);
+  // Track which round IDs we've already recorded history for
+  const recordedRoundsRef = useRef<Set<string>>(new Set());
+  // Track the bet for the current round before settlement
+  const pendingBetRef = useRef<{ bet: string; stake: number } | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!actor) return;
@@ -286,14 +334,41 @@ function GamePanel({ game, displayName, icon }: GamePanelProps) {
         ).getCasinoRoundHistory(game),
       ]);
       const forThisGame = rounds.filter((r) => r.game === game);
-      setActiveRound(forThisGame[0] ?? null);
+      const round = forThisGame[0] ?? null;
+
+      // Check if a settled round has a pending bet to record
+      if (
+        round &&
+        round.status === "settled" &&
+        round.result &&
+        pendingBetRef.current &&
+        currentUser &&
+        !recordedRoundsRef.current.has(String(round.id))
+      ) {
+        recordedRoundsRef.current.add(String(round.id));
+        const { bet, stake: betStake } = pendingBetRef.current;
+        const pnl = calculateCasinoPnl(game, bet, round.result, betStake);
+        addCasinoHistory({
+          userId: currentUser.id,
+          game,
+          roundId: String(round.id),
+          bet,
+          stake: betStake,
+          result: round.result,
+          pnl,
+          placedAt: new Date().toISOString(),
+        });
+        pendingBetRef.current = null;
+      }
+
+      setActiveRound(round);
       setHistory(hist.slice(0, 10));
     } catch {
       // backend not connected yet — keep mock state
     } finally {
       setLoading(false);
     }
-  }, [actor, game]);
+  }, [actor, game, currentUser, addCasinoHistory]);
 
   useEffect(() => {
     fetchData();
@@ -328,6 +403,8 @@ function GamePanel({ game, displayName, icon }: GamePanelProps) {
         BigInt(Math.round(stake * 100)),
         betData,
       );
+      // Store pending bet so we can record history when round settles
+      pendingBetRef.current = { bet: selectedBet, stake };
       toast.success(`Bet placed: ${selectedBet} @ ₹${stake}`, {
         description: `${displayName} — Round #${activeRound.id}`,
       });

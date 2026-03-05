@@ -30,14 +30,19 @@ const SPORT_MAP: Record<string, SportType> = {
 };
 
 // Priority sports to fetch (limited to save API credits)
+// Cricket first, then football, then tennis
 export const PRIORITY_SPORTS = [
   "cricket_ipl",
   "cricket_international",
   "cricket_t20",
+  "cricket_test_match",
+  "cricket_odi",
   "soccer_epl",
   "soccer_spain_la_liga",
+  "soccer_uefa_champs_league",
   "tennis_atp_wimbledon",
   "tennis_atp_dubai",
+  "tennis_atp_french_open",
 ];
 
 export interface OddsEvent {
@@ -88,7 +93,7 @@ export async function fetchInSeasonSports(): Promise<SportInfo[]> {
   }
 }
 
-// Fetch odds for a specific sport
+// Fetch odds for a specific sport — returns both live and upcoming
 export async function fetchOddsForSport(
   sportKey: string,
   regions = "uk",
@@ -171,31 +176,49 @@ export function convertEventToMarket(event: OddsEvent): Market {
     id: event.id,
     sport: sportType,
     eventName: `${event.home_team} vs ${event.away_team}`,
-    description: `${event.sport_title} — ${isLive ? "LIVE" : commenceTime.toLocaleDateString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}`,
+    description: `${event.sport_title} — ${
+      isLive
+        ? "LIVE"
+        : commenceTime.toLocaleDateString("en-IN", {
+            day: "numeric",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+            timeZone: "Asia/Kolkata",
+          })
+    }`,
     selections,
-    status: isLive ? "open" : "open",
+    status: "open",
     createdAt: event.commence_time,
   };
 }
 
-// Fetch and convert all priority sports into Markets
+// Fetch and convert all available in-season sports into Markets
+// First checks which sports are actually in-season, then fetches those
 export async function fetchAllLiveMarkets(): Promise<Market[]> {
   const allMarkets: Market[] = [];
 
-  // Check which sports are in-season first
+  // Step 1: Get in-season sports from API
   const inSeasonSports = await fetchInSeasonSports();
-  const inSeasonKeys = new Set(inSeasonSports.map((s) => s.key));
+  const inSeasonKeys = inSeasonSports.map((s) => s.key);
 
-  // Filter priority sports to only in-season ones
-  const sportsToFetch = PRIORITY_SPORTS.filter((s) => inSeasonKeys.has(s));
+  // Step 2: Find which of our SPORT_MAP sports are currently in-season
+  const availableSportKeys = Object.keys(SPORT_MAP).filter((key) =>
+    inSeasonKeys.includes(key),
+  );
 
-  // If none of priority sports are in season, try fetching them anyway
+  // Step 3: If nothing found in our map, use fallback football leagues
   const fetchList =
-    sportsToFetch.length > 0
-      ? sportsToFetch.slice(0, 3)
-      : PRIORITY_SPORTS.slice(0, 2);
+    availableSportKeys.length > 0
+      ? availableSportKeys.slice(0, 6)
+      : [
+          "soccer_epl",
+          "soccer_spain_la_liga",
+          "soccer_uefa_champs_league",
+          "soccer_germany_bundesliga",
+        ];
 
-  // Fetch in parallel (limited to save API credits)
+  // Step 4: Fetch in parallel
   const results = await Promise.allSettled(
     fetchList.map((sportKey) => fetchOddsForSport(sportKey)),
   );
@@ -203,8 +226,8 @@ export async function fetchAllLiveMarkets(): Promise<Market[]> {
   for (const result of results) {
     if (result.status === "fulfilled") {
       const events = result.value;
-      // Take top 3 events per sport to save credits
-      const top = events.slice(0, 3);
+      // Take top 5 events per sport (show live + upcoming)
+      const top = events.slice(0, 5);
       for (const event of top) {
         if (event.bookmakers.length > 0) {
           allMarkets.push(convertEventToMarket(event));
@@ -217,24 +240,42 @@ export async function fetchAllLiveMarkets(): Promise<Market[]> {
 }
 
 // Fetch just a few events for landing page preview (saves credits)
+// Shows both live and upcoming events
 export async function fetchPreviewEvents(count = 3): Promise<Market[]> {
-  // Use only 1 cricket sport for preview to save credits
-  const sportKey = "cricket_ipl";
-  try {
-    const events = await fetchOddsForSport(sportKey, "uk", "h2h");
-    if (events.length > 0) {
-      return events
-        .slice(0, count)
-        .filter((e) => e.bookmakers.length > 0)
-        .map(convertEventToMarket);
+  // Try cricket sports first (multiple keys since different seasons)
+  const cricketKeys = [
+    "cricket_ipl",
+    "cricket_international",
+    "cricket_t20",
+    "cricket_test_match",
+  ];
+
+  for (const sportKey of cricketKeys) {
+    try {
+      const events = await fetchOddsForSport(sportKey, "uk", "h2h");
+      const withOdds = events.filter((e) => e.bookmakers.length > 0);
+      if (withOdds.length > 0) {
+        return withOdds.slice(0, count).map(convertEventToMarket);
+      }
+    } catch {
+      // try next
     }
-  } catch {
-    // fallback
   }
 
-  // Fallback: try soccer
+  // Fallback: try football EPL
   try {
     const events = await fetchOddsForSport("soccer_epl", "uk", "h2h");
+    const withOdds = events.filter((e) => e.bookmakers.length > 0);
+    if (withOdds.length > 0) {
+      return withOdds.slice(0, count).map(convertEventToMarket);
+    }
+  } catch {
+    // ignore
+  }
+
+  // Fallback: try La Liga
+  try {
+    const events = await fetchOddsForSport("soccer_spain_la_liga", "uk", "h2h");
     return events
       .slice(0, count)
       .filter((e) => e.bookmakers.length > 0)

@@ -15,6 +15,7 @@ import {
   Circle,
   CreditCard,
   MinusCircle,
+  Plus,
   PlusCircle,
   Shield,
   ShieldOff,
@@ -187,6 +188,93 @@ function CreditLimitDialog({ user }: { user: User }) {
   );
 }
 
+function CreateUserDialog() {
+  const createUser = useStore((s) => s.createUser);
+  const currentUser = useStore((s) => s.currentUser);
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!username.trim() || !password.trim()) return;
+    createUser(username, password, currentUser?.id ?? "");
+    toast.success(`User account created: ${username}`);
+    setOpen(false);
+    setUsername("");
+    setPassword("");
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          size="sm"
+          className="text-background font-semibold"
+          style={{
+            background:
+              "linear-gradient(135deg, oklch(var(--gold)), oklch(var(--accent)))",
+          }}
+          data-ocid="admin.create_user.open_modal_button"
+        >
+          <Plus className="w-4 h-4 mr-1.5" />
+          Create User
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="bg-card border-border max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="text-foreground">
+            Create User Account
+          </DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Username</Label>
+            <Input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Username"
+              className="bg-input border-border h-9"
+              data-ocid="admin.create_user.input"
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Password</Label>
+            <Input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password"
+              className="bg-input border-border h-9"
+              required
+            />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              data-ocid="admin.create_user_dialog.cancel_button"
+              onClick={() => setOpen(false)}
+              className="text-muted-foreground"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              data-ocid="admin.create_user_dialog.confirm_button"
+              className="text-background font-semibold"
+              style={{ background: "oklch(var(--gold))" }}
+            >
+              Create User
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function AdminUsersPage() {
   const users = useStore((s) => s.users);
   const toggleUserStatus = useStore((s) => s.toggleUserStatus);
@@ -198,15 +286,18 @@ export function AdminUsersPage() {
   return (
     <div className="p-4 max-w-5xl mx-auto">
       {/* Header */}
-      <div className="flex items-center gap-2 mb-5">
-        <Users className="w-5 h-5 text-gold" />
-        <h1 className="text-lg font-bold text-foreground">Users</h1>
-        <Badge
-          variant="outline"
-          className="text-xs border-border text-muted-foreground"
-        >
-          {regularUsers.length} users
-        </Badge>
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-2">
+          <Users className="w-5 h-5 text-gold" />
+          <h1 className="text-lg font-bold text-foreground">Users</h1>
+          <Badge
+            variant="outline"
+            className="text-xs border-border text-muted-foreground"
+          >
+            {regularUsers.length} users
+          </Badge>
+        </div>
+        <CreateUserDialog />
       </div>
 
       {/* Users Table */}

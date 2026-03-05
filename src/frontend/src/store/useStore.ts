@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 // Types
-export type UserRole = "superadmin" | "admin" | "user";
+export type UserRole = "master" | "superadmin" | "admin" | "user";
 export type UserStatus = "active" | "suspended";
 export type MarketStatus = "open" | "suspended" | "closed" | "settled";
 export type BetType = "back" | "lay";
@@ -89,6 +89,28 @@ export interface Bet {
   placedAt: string;
 }
 
+export interface CasinoHistoryEntry {
+  id: string;
+  userId: string;
+  game: string; // "roulette" | "teenpatti" | "andarbahar"
+  roundId: string;
+  bet: string; // what they bet on e.g. "red", "player_a", "andar"
+  stake: number;
+  result: string; // actual result
+  pnl: number; // positive = win, negative = loss
+  placedAt: string;
+}
+
+export interface CrashHistoryEntry {
+  id: string;
+  userId: string;
+  game: string; // "aviator" | "plinko" | "dice"
+  stake: number;
+  cashoutMultiplier: number; // 0 if crashed/lost
+  pnl: number;
+  placedAt: string;
+}
+
 export type Page =
   | "landing"
   | "login"
@@ -103,7 +125,9 @@ export type Page =
   | "admin-casino"
   | "admin-crash"
   | "superadmin-dashboard"
-  | "superadmin-admins";
+  | "superadmin-admins"
+  | "master-dashboard"
+  | "master-superadmins";
 
 interface BetSlipState {
   isOpen: boolean;
@@ -127,6 +151,8 @@ interface AppState {
   bets: Bet[];
   fancyMarkets: FancyMarket[];
   fancyBets: FancyBet[];
+  casinoHistory: CasinoHistoryEntry[];
+  crashHistory: CrashHistoryEntry[];
 
   // BetSlip
   betSlip: BetSlipState | null;
@@ -169,6 +195,14 @@ interface AppState {
   // Actions - SuperAdmin
   createAdmin: (username: string, password: string) => void;
   deleteAdmin: (userId: string) => void;
+
+  // Actions - Master
+  createSuperAdmin: (username: string, password: string) => void;
+  createUser: (username: string, password: string, createdBy: string) => void;
+
+  // Actions - History
+  addCasinoHistory: (entry: Omit<CasinoHistoryEntry, "id">) => void;
+  addCrashHistory: (entry: Omit<CrashHistoryEntry, "id">) => void;
 }
 
 const generateId = () => Math.random().toString(36).substring(2, 11);
@@ -176,6 +210,16 @@ const generateId = () => Math.random().toString(36).substring(2, 11);
 const now = () => new Date().toISOString();
 
 const initialUsers: User[] = [
+  {
+    id: "0",
+    username: "master",
+    password: "master123",
+    role: "master",
+    balance: 0,
+    creditLimit: 0,
+    status: "active",
+    createdAt: "2025-01-01T00:00:00.000Z",
+  },
   {
     id: "1",
     username: "superadmin",
@@ -519,6 +563,8 @@ export const useStore = create<AppState>()(
       bets: initialBets,
       fancyMarkets: initialFancyMarkets,
       fancyBets: [],
+      casinoHistory: [],
+      crashHistory: [],
       betSlip: null,
 
       login: (username, password) => {
@@ -531,9 +577,10 @@ export const useStore = create<AppState>()(
         if (!user) return false;
 
         let page: Page = "landing";
-        if (user.role === "user") page = "user-markets";
-        else if (user.role === "admin") page = "admin-markets";
+        if (user.role === "master") page = "master-dashboard";
         else if (user.role === "superadmin") page = "superadmin-dashboard";
+        else if (user.role === "admin") page = "admin-markets";
+        else if (user.role === "user") page = "user-markets";
 
         set({ currentUser: user, currentPage: page, betSlip: null });
         return true;
@@ -851,15 +898,66 @@ export const useStore = create<AppState>()(
           users: state.users.filter((u) => u.id !== userId),
         }));
       },
+
+      createSuperAdmin: (username, password) => {
+        const newSuperAdmin: User = {
+          id: generateId(),
+          username,
+          password,
+          role: "superadmin",
+          balance: 0,
+          creditLimit: 0,
+          status: "active",
+          createdAt: now(),
+        };
+        set((state) => ({ users: [...state.users, newSuperAdmin] }));
+      },
+
+      createUser: (username, password, _createdBy) => {
+        const newUser: User = {
+          id: generateId(),
+          username,
+          password,
+          role: "user",
+          balance: 1000,
+          creditLimit: 10000,
+          status: "active",
+          createdAt: now(),
+        };
+        set((state) => ({ users: [...state.users, newUser] }));
+      },
+
+      addCasinoHistory: (entry) => {
+        const newEntry: CasinoHistoryEntry = {
+          ...entry,
+          id: generateId(),
+        };
+        set((state) => ({
+          casinoHistory: [newEntry, ...state.casinoHistory],
+        }));
+      },
+
+      addCrashHistory: (entry) => {
+        const newEntry: CrashHistoryEntry = {
+          ...entry,
+          id: generateId(),
+        };
+        set((state) => ({
+          crashHistory: [newEntry, ...state.crashHistory],
+        }));
+      },
     }),
     {
-      name: "kingbet-storage",
+      name: "kingbet-storage-v2",
       partialize: (state) => ({
         users: state.users,
         markets: state.markets,
         bets: state.bets,
+        fancyMarkets: state.fancyMarkets,
         fancyBets: state.fancyBets,
         currentUser: state.currentUser,
+        casinoHistory: state.casinoHistory,
+        crashHistory: state.crashHistory,
       }),
     },
   ),

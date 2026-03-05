@@ -11,6 +11,9 @@ import { AnimatePresence, motion, useAnimate } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+// Helper to safely call addCrashHistory without repeating useStore calls in every component
+// Each game component will call useStore directly
+
 interface CrashRound {
   id: bigint;
   crashPoint: bigint;
@@ -32,14 +35,15 @@ interface CrashBet {
 
 // ─── Multiplier Display (Aviator) ─────────────────────────────────────────────
 function MultiplierDisplay({
-  multiplier,
+  displayMultiplier,
   status,
 }: {
-  multiplier: number;
+  displayMultiplier: number;
   status: string;
 }) {
   const isCrashed = status === "crashed";
   const isRunning = status === "running";
+  const isWaiting = status === "waiting";
 
   return (
     <div
@@ -94,7 +98,7 @@ function MultiplierDisplay({
                 : "text-muted-foreground"
           }`}
         >
-          {multiplier.toFixed(2)}x
+          {isWaiting ? "0.00x" : `${displayMultiplier.toFixed(2)}x`}
         </div>
         <div
           className={`text-sm font-semibold mt-2 ${
@@ -105,9 +109,9 @@ function MultiplierDisplay({
                 : "text-muted-foreground"
           }`}
         >
-          {isCrashed ? "CRASHED!" : isRunning ? "FLYING..." : "WAITING"}
+          {isCrashed ? "CRASHED!" : isRunning ? "FLYING..." : "BETTING OPEN"}
         </div>
-        {status === "waiting" && (
+        {isWaiting && (
           <div className="text-xs text-muted-foreground/60 mt-1">
             Place your bets now
           </div>
@@ -223,6 +227,17 @@ function generateCrashPoint(): number {
 function AviatorGame() {
   const { actor } = useActor();
   const { currentUser, debitUserBalance, creditUserBalance } = useStore();
+  const addCrashHistory = useStore((s) => s.addCrashHistory);
+  const recordedAviatorRoundsRef = useRef<Set<number>>(new Set());
+  // Keep refs to stable callbacks for use inside setLocalRound closures
+  const currentUserRef = useRef(currentUser);
+  const addCrashHistoryRef = useRef(addCrashHistory);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+  useEffect(() => {
+    addCrashHistoryRef.current = addCrashHistory;
+  }, [addCrashHistory]);
 
   // Local simulation state (used when backend not available)
   const [localRound, setLocalRound] = useState<LocalRound>(() => ({
@@ -332,7 +347,20 @@ function AviatorGame() {
             const payout = Number.parseFloat(
               (bet.stake * bet.autoCashout).toFixed(2),
             );
-            creditUserBalance(currentUser?.id ?? "", payout);
+            creditUserBalance(currentUserRef.current?.id ?? "", payout);
+            // Record auto-cashout win in history
+            const cu1 = currentUserRef.current;
+            if (cu1 && !recordedAviatorRoundsRef.current.has(prev.id)) {
+              recordedAviatorRoundsRef.current.add(prev.id);
+              addCrashHistoryRef.current({
+                userId: cu1.id,
+                game: "aviator",
+                stake: bet.stake,
+                cashoutMultiplier: bet.autoCashout,
+                pnl: payout - bet.stake,
+                placedAt: new Date().toISOString(),
+              });
+            }
             localBetRef.current = null;
             toast.success(
               `Auto cash out at ${bet.autoCashout.toFixed(2)}x! +₹${payout}`,
@@ -345,6 +373,23 @@ function AviatorGame() {
             const finalM = prev.crashPoint;
             setMultiplier(finalM);
             // settle any remaining local bet as lost
+            const remainingBet = localBetRef.current;
+            const cu2 = currentUserRef.current;
+            if (
+              remainingBet &&
+              cu2 &&
+              !recordedAviatorRoundsRef.current.has(prev.id)
+            ) {
+              recordedAviatorRoundsRef.current.add(prev.id);
+              addCrashHistoryRef.current({
+                userId: cu2.id,
+                game: "aviator",
+                stake: remainingBet.stake,
+                cashoutMultiplier: 0,
+                pnl: -remainingBet.stake,
+                placedAt: new Date().toISOString(),
+              });
+            }
             localBetRef.current = null;
             const newRound = { ...prev, status: "crashed" as LocalRoundStatus };
             setHistory((h) => [
@@ -364,7 +409,7 @@ function AviatorGame() {
         });
       }, TICK);
     }, BETTING_WINDOW);
-  }, [creditUserBalance, currentUser?.id]);
+  }, [creditUserBalance]);
 
   // Start local loop on mount (always, as fallback shown before backend check)
   // biome-ignore lint/correctness/useExhaustiveDependencies: startLocalLoop is stable on mount; re-running on change would restart the loop unexpectedly
@@ -469,10 +514,22 @@ function AviatorGame() {
     // Local simulation path
     if (!backendConnected) {
       if (!localBetRef.current) return;
-      const payout = Number.parseFloat(
-        (localBetRef.current.stake * multiplier).toFixed(2),
-      );
+      const betStake = localBetRef.current.stake;
+      const payout = Number.parseFloat((betStake * multiplier).toFixed(2));
       creditUserBalance(currentUser?.id ?? "", payout);
+      // Record manual cashout in history
+      const cu = currentUserRef.current;
+      if (cu && !recordedAviatorRoundsRef.current.has(localRound.id)) {
+        recordedAviatorRoundsRef.current.add(localRound.id);
+        addCrashHistoryRef.current({
+          userId: cu.id,
+          game: "aviator",
+          stake: betStake,
+          cashoutMultiplier: multiplier,
+          pnl: payout - betStake,
+          placedAt: new Date().toISOString(),
+        });
+      }
       localBetRef.current = null;
       setHasPlacedBet(false);
       toast.success(`Cashed out at ${multiplier.toFixed(2)}x! +₹${payout}`);
@@ -503,9 +560,15 @@ function AviatorGame() {
   const canPlaceBet = status === "waiting" && !hasPlacedBet;
   const canCashOut = status === "running" && hasPlacedBet;
 
+  // During waiting phase show 0.00x; once flying show actual multiplier (starts from 1.00)
+  const displayMultiplier = status === "waiting" ? 0 : multiplier;
+
   return (
     <div className="space-y-4">
-      <MultiplierDisplay multiplier={multiplier} status={status} />
+      <MultiplierDisplay
+        displayMultiplier={displayMultiplier}
+        status={status}
+      />
 
       <div className="rounded-xl border border-border bg-card p-4">
         <div className="grid grid-cols-2 gap-4 mb-4">
@@ -833,6 +896,7 @@ function PlinkoBoardSVG({
 
 function PlinkoGame() {
   const { currentUser, debitUserBalance, creditUserBalance } = useStore();
+  const addCrashHistory = useStore((s) => s.addCrashHistory);
 
   const [stake, setStake] = useState(100);
   const [rows, setRows] = useState<PlinkoRows>(8);
@@ -893,6 +957,16 @@ function PlinkoGame() {
     setLastResult(result);
     setLandedBucket(bucketIndex);
     setIsDropping(false);
+
+    // Record Plinko history
+    addCrashHistory({
+      userId: currentUser.id,
+      game: "plinko",
+      stake,
+      cashoutMultiplier: multiplier,
+      pnl: payout - stake,
+      placedAt: new Date().toISOString(),
+    });
 
     setHistory((prev) => [
       {
@@ -1242,6 +1316,7 @@ function DiceFace({
 
 function DiceGame() {
   const { currentUser, debitUserBalance, creditUserBalance } = useStore();
+  const addCrashHistory = useStore((s) => s.addCrashHistory);
 
   const [stake, setStake] = useState(100);
   const [target, setTarget] = useState(50);
@@ -1320,6 +1395,16 @@ function DiceGame() {
     setLastResult(result);
     setIsRolling(false);
     setHistory((prev) => [result, ...prev.slice(0, 9)]);
+
+    // Record Dice history
+    addCrashHistory({
+      userId: currentUser.id,
+      game: "dice",
+      stake,
+      cashoutMultiplier: won ? multiplier : 0,
+      pnl: won ? payout - stake : -stake,
+      placedAt: new Date().toISOString(),
+    });
 
     if (won) {
       toast.success(

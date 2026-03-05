@@ -1,38 +1,35 @@
 # KINGBET
 
 ## Current State
-- Frontend-only app with React + Zustand store
-- Markets page shows hardcoded static cricket/football/tennis markets with mock odds
-- Odds drift is simulated locally via `updateFancyOdds` interval
-- LandingPage sports preview uses hardcoded mock data
-- No external API integration exists
+- Landing page exists with hero, sports preview, casino, crash games, FAQ, footer sections
+- Sports preview uses card-based layout with Back/Lay buttons
+- Markets page has 1xBet-style exchange layout with IN-PLAY/UPCOMING sections
+- Back/Lay buttons use blue/pink colors without "Lagao/Khai" Indian labels
+- Landing page "Live Markets" section shows generic card grid, not a compact Diamond Exchange table format
 
 ## Requested Changes (Diff)
 
 ### Add
-- `oddsService.ts` utility that calls TheOddsAPI (key: `a231ad9c198d20afdf0315d0eae4d7a2`) to fetch:
-  - In-season sports list (cricket, soccer, tennis)
-  - Upcoming + live events with Back/Lay-style odds (h2h markets)
-- Auto-polling every 2 seconds on MarketsPage for live odds refresh
-- Live sports preview on LandingPage using real API data
+- Diamond Exchange / 1xBet-style compact table in landing page "Live Sports" section (replacing card grid):
+  - Table headers: Event | 1 | X | 2 with Back=blue, Lay=pink column backgrounds
+  - Each row: sport emoji, match name, competition, LIVE/Soon badge, odds buttons, animated dot for live
+  - "Lagao" label on Back buttons, "Khai" label on Lay buttons (compact Indian exchange terminology)
+- Sports categories grid on landing page (Cricket, Football, Tennis, Basketball, Horse Racing, Kabaddi with event counts)
+- "Lagao / Khai" column headers in Markets page exchange table (replacing "← Back" / "Lay →")
+- "Lagao" / "Khai" labels on OddsCell buttons in Markets page
 
 ### Modify
-- `MarketsPage.tsx` — replace static store markets with live API data; keep fallback to store data if API fails or rate-limited
-- `LandingPage.tsx` — live sports preview section now fetches real upcoming matches from TheOddsAPI
+- Landing page LiveSportsPreview section: replace 3-column card grid with compact horizontal table format matching Diamond Exchange / 1xBet India style
+- MarketCard exchange table header: change "← Back" to "← Lagao (Back)" and "Lay →" to "Khai (Lay) →"
+- OddsCell: no visual change needed, just header labels update
+- Landing page hero CTA buttons: "Start Trading" and "Get Your ID" style consistent with new layout
 
 ### Remove
-- Nothing removed; mock data kept as fallback
+- Nothing removed, only enhancing existing sections
 
 ## Implementation Plan
-1. Create `src/frontend/src/utils/oddsService.ts`:
-   - `fetchSports()` — GET /v4/sports with apiKey
-   - `fetchOdds(sport, markets, regions)` — GET /v4/sports/{sport}/odds
-   - Map API response to internal `Market` type with Back (bestBack) and Lay (bestBack + 0.02) odds derived from bookmaker data
-2. Update `MarketsPage.tsx`:
-   - On mount, call `oddsService.fetchOdds` for cricket_international, soccer_epl, tennis_atp
-   - Poll every 2 seconds using setInterval
-   - Map API `Event` objects to `Market[]` format
-   - Show API data when available; fall back to store markets on error
-3. Update `LandingPage.tsx`:
-   - Fetch top 3 upcoming events from API on mount
-   - Show match name, teams, and live back odds in the preview cards
+1. Replace `LiveSportsPreview` component in LandingPage.tsx with Diamond Exchange compact table format
+2. Add Sports Categories section to landing page (between live markets and casino)
+3. Update `MarketCard` exchange table headers in MarketsPage.tsx to show "Lagao (Back)" and "Khai (Lay)"
+4. Update fancy/session column headers in FancySection to show "KHAI" and "LGAO" instead of "NO" and "YES"
+5. Ensure btn-back and btn-lay CSS classes are available in global CSS or inline styled consistently

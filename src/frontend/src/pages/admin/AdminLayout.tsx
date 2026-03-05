@@ -43,7 +43,33 @@ export function AdminLayout({
 
   const navItems = [...baseNavItems, ...extraNavItems];
 
-  const isSuperAdmin = currentUser?.role === "superadmin";
+  const isSuperAdmin =
+    currentUser?.role === "superadmin" || currentUser?.role === "master";
+  const isMaster = currentUser?.role === "master";
+
+  const badgeStyle = isMaster
+    ? {
+        background: "oklch(0.65 0.18 300 / 0.15)",
+        color: "oklch(0.65 0.18 300)",
+        borderColor: "oklch(0.65 0.18 300 / 0.3)",
+      }
+    : isSuperAdmin
+      ? {
+          background: "oklch(var(--gold) / 0.15)",
+          color: "oklch(var(--gold))",
+          borderColor: "oklch(var(--gold) / 0.3)",
+        }
+      : {
+          background: "oklch(var(--back) / 0.15)",
+          color: "oklch(var(--back))",
+          borderColor: "oklch(var(--back) / 0.3)",
+        };
+
+  const badgeLabel = isMaster
+    ? "Master Panel"
+    : isSuperAdmin
+      ? "Super Admin Panel"
+      : "Admin Panel";
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -81,19 +107,11 @@ export function AdminLayout({
         {/* Admin badge */}
         <Badge
           className="ml-3 text-[10px] uppercase font-bold hidden sm:flex items-center gap-1"
-          style={{
-            background: isSuperAdmin
-              ? "oklch(var(--gold) / 0.15)"
-              : "oklch(var(--back) / 0.15)",
-            color: isSuperAdmin ? "oklch(var(--gold))" : "oklch(var(--back))",
-            borderColor: isSuperAdmin
-              ? "oklch(var(--gold) / 0.3)"
-              : "oklch(var(--back) / 0.3)",
-          }}
+          style={badgeStyle}
           variant="outline"
         >
           <ShieldCheck className="w-3 h-3" />
-          {isSuperAdmin ? "Super Admin" : "Admin"} Panel
+          {badgeLabel}
         </Badge>
 
         <div className="ml-auto flex items-center gap-2">

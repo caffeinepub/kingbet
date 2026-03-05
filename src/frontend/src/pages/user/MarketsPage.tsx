@@ -10,16 +10,24 @@ import {
   useStore,
 } from "@/store/useStore";
 import { fetchAllLiveMarkets } from "@/utils/oddsService";
-import { Circle, Lock, Radio, Trophy, Zap } from "lucide-react";
+import {
+  Activity,
+  Circle,
+  Clock,
+  Lock,
+  Radio,
+  Trophy,
+  Zap,
+} from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 const SPORT_TABS = [
-  { label: "ALL", value: "all" },
-  { label: "Cricket", value: "cricket" },
-  { label: "Football", value: "football" },
-  { label: "Tennis", value: "tennis" },
+  { label: "ALL", value: "all", icon: "🏆" },
+  { label: "Cricket", value: "cricket", icon: "🏏" },
+  { label: "Football", value: "football", icon: "⚽" },
+  { label: "Tennis", value: "tennis", icon: "🎾" },
 ];
 
 const SPORT_ICONS: Record<SportType, string> = {
@@ -34,103 +42,266 @@ const SPORT_COLORS: Record<SportType, string> = {
   tennis: "oklch(0.72 0.18 60)",
 };
 
+const SPORT_LABELS: Record<SportType, string> = {
+  cricket: "Cricket",
+  football: "Football",
+  tennis: "Tennis",
+};
+
 function formatVolume(n: number) {
   if (n >= 1000000) return `₹${(n / 1000000).toFixed(1)}M`;
   if (n >= 1000) return `₹${(n / 1000).toFixed(0)}K`;
   return `₹${n}`;
 }
 
-interface SelectionRowProps {
-  selection: Market["selections"][0];
-  market: Market;
-  index: number;
+function formatMatchTime(createdAt: string): {
+  isLive: boolean;
+  label: string;
+} {
+  const commence = new Date(createdAt);
+  const now = new Date();
+  const isLive = commence <= now;
+
+  if (isLive) {
+    return { isLive: true, label: "In-Play" };
+  }
+
+  // Show time in IST
+  const istLabel = commence.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+    hour12: true,
+  });
+  return { isLive: false, label: istLabel };
 }
 
-function SelectionRow({ selection, market, index }: SelectionRowProps) {
+function getTeamInitials(name: string): string {
+  const words = name.trim().split(/\s+/);
+  if (words.length === 1) return words[0].substring(0, 2).toUpperCase();
+  return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+}
+
+function getLeagueName(market: Market): string {
+  // Extract league/competition from description or derive from sport
+  if (market.description) {
+    // Try to extract from description like "Premier League Matchday 28"
+    const descParts = market.description.split("—");
+    if (descParts.length > 0) {
+      const part = descParts[0].trim();
+      if (part && part !== "LIVE") return part;
+    }
+  }
+  return SPORT_LABELS[market.sport];
+}
+
+// ─── Exchange Odds Cell ────────────────────────────────────────────────────────
+function OddsCell({
+  odds,
+  volume,
+  type,
+  onClick,
+  disabled,
+  ocid,
+}: {
+  odds: number;
+  volume: number;
+  type: "back" | "lay";
+  onClick: () => void;
+  disabled: boolean;
+  ocid: string;
+}) {
+  const isBack = type === "back";
+  return (
+    <button
+      type="button"
+      data-ocid={ocid}
+      onClick={onClick}
+      disabled={disabled}
+      className="flex flex-col items-center justify-center h-11 min-w-[52px] w-full rounded transition-all duration-100 active:scale-95 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed"
+      style={{
+        background: isBack
+          ? "oklch(0.55 0.18 240 / 0.18)"
+          : "oklch(0.62 0.22 20 / 0.18)",
+        border: `1px solid ${isBack ? "oklch(0.55 0.18 240 / 0.35)" : "oklch(0.62 0.22 20 / 0.35)"}`,
+      }}
+    >
+      <span
+        className="text-sm font-bold font-mono leading-none"
+        style={{
+          color: isBack ? "oklch(0.75 0.18 240)" : "oklch(0.75 0.22 20)",
+        }}
+      >
+        {odds.toFixed(2)}
+      </span>
+      <span className="text-[9px] text-muted-foreground mt-0.5 font-mono">
+        {formatVolume(volume)}
+      </span>
+    </button>
+  );
+}
+
+// ─── Exchange Row (1xBet-style 3-col) ─────────────────────────────────────────
+interface ExchangeRowProps {
+  selection: Market["selections"][0];
+  market: Market;
+  rowIndex: number;
+}
+
+function ExchangeRow({ selection, market, rowIndex }: ExchangeRowProps) {
   const openBetSlip = useStore((s) => s.openBetSlip);
-
-  const handleBack = () => {
-    openBetSlip({
-      marketId: market.id,
-      marketName: market.eventName,
-      selectionId: selection.id,
-      selectionName: selection.name,
-      type: "back",
-      odds: selection.backOdds,
-    });
-  };
-
-  const handleLay = () => {
-    openBetSlip({
-      marketId: market.id,
-      marketName: market.eventName,
-      selectionId: selection.id,
-      selectionName: selection.name,
-      type: "lay",
-      odds: selection.layOdds,
-    });
-  };
-
   const disabled = market.status !== "open";
 
   return (
-    <div className="flex items-center justify-between py-2 px-4 hover:bg-secondary/30 transition-colors group">
-      <div className="flex-1 min-w-0">
+    <div className="flex items-center gap-0 border-b border-border/30 last:border-0 hover:bg-white/[0.02] transition-colors group">
+      {/* Selection name */}
+      <div className="flex-1 min-w-0 flex items-center gap-2 px-3 py-2.5">
+        <div
+          className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0"
+          style={{
+            background: `${SPORT_COLORS[market.sport]}22`,
+            color: SPORT_COLORS[market.sport],
+            border: `1px solid ${SPORT_COLORS[market.sport]}44`,
+          }}
+        >
+          {getTeamInitials(selection.name)}
+        </div>
         <span className="text-sm font-medium text-foreground truncate">
           {selection.name}
         </span>
       </div>
 
-      {/* Volume */}
-      <div className="hidden md:flex flex-col items-end mr-4 min-w-0">
-        <span className="text-[10px] text-muted-foreground">
-          {formatVolume(selection.backVolume)}
-        </span>
+      {/* Back column (blue) */}
+      <div
+        className="flex items-center gap-0.5 px-1 py-1.5"
+        style={{ background: "oklch(0.55 0.18 240 / 0.06)" }}
+      >
+        {/* 3rd best (faded) */}
+        <div className="hidden lg:block opacity-50">
+          <OddsCell
+            odds={Number((selection.backOdds - 0.04).toFixed(2))}
+            volume={Math.floor(selection.backVolume * 0.4)}
+            type="back"
+            onClick={() =>
+              openBetSlip({
+                marketId: market.id,
+                marketName: market.eventName,
+                selectionId: selection.id,
+                selectionName: selection.name,
+                type: "back",
+                odds: Number((selection.backOdds - 0.04).toFixed(2)),
+              })
+            }
+            disabled={disabled}
+            ocid={`market.back_button.${rowIndex + 1}`}
+          />
+        </div>
+        {/* 2nd best (semi-faded) */}
+        <div className="hidden sm:block opacity-75">
+          <OddsCell
+            odds={Number((selection.backOdds - 0.02).toFixed(2))}
+            volume={Math.floor(selection.backVolume * 0.65)}
+            type="back"
+            onClick={() =>
+              openBetSlip({
+                marketId: market.id,
+                marketName: market.eventName,
+                selectionId: selection.id,
+                selectionName: selection.name,
+                type: "back",
+                odds: Number((selection.backOdds - 0.02).toFixed(2)),
+              })
+            }
+            disabled={disabled}
+            ocid={`market.back_button.${rowIndex + 1}`}
+          />
+        </div>
+        {/* Best back */}
+        <OddsCell
+          odds={selection.backOdds}
+          volume={selection.backVolume}
+          type="back"
+          onClick={() =>
+            openBetSlip({
+              marketId: market.id,
+              marketName: market.eventName,
+              selectionId: selection.id,
+              selectionName: selection.name,
+              type: "back",
+              odds: selection.backOdds,
+            })
+          }
+          disabled={disabled}
+          ocid={`market.back_button.${rowIndex + 1}`}
+        />
       </div>
 
-      {/* Back Button */}
-      <button
-        type="button"
-        data-ocid={`market.back_button.${index + 1}`}
-        onClick={handleBack}
-        disabled={disabled}
-        className="flex flex-col items-center justify-center w-16 h-12 rounded-lg mx-1 transition-all duration-150 hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
-        style={{
-          background: "oklch(var(--back) / 0.15)",
-          border: "1px solid oklch(var(--back) / 0.3)",
-        }}
-        title="Back"
+      {/* Lay column (pink) */}
+      <div
+        className="flex items-center gap-0.5 px-1 py-1.5"
+        style={{ background: "oklch(0.62 0.22 20 / 0.06)" }}
       >
-        <span
-          className="text-sm font-bold font-mono leading-none"
-          style={{ color: "oklch(var(--back))" }}
-        >
-          {selection.backOdds.toFixed(2)}
-        </span>
-        <span className="text-[9px] text-muted-foreground mt-0.5">BACK</span>
-      </button>
-
-      {/* Lay Button */}
-      <button
-        type="button"
-        data-ocid={`market.lay_button.${index + 1}`}
-        onClick={handleLay}
-        disabled={disabled}
-        className="flex flex-col items-center justify-center w-16 h-12 rounded-lg mx-1 transition-all duration-150 hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
-        style={{
-          background: "oklch(var(--lay) / 0.15)",
-          border: "1px solid oklch(var(--lay) / 0.3)",
-        }}
-        title="Lay"
-      >
-        <span
-          className="text-sm font-bold font-mono leading-none"
-          style={{ color: "oklch(var(--lay))" }}
-        >
-          {selection.layOdds.toFixed(2)}
-        </span>
-        <span className="text-[9px] text-muted-foreground mt-0.5">LAY</span>
-      </button>
+        {/* Best lay */}
+        <OddsCell
+          odds={selection.layOdds}
+          volume={selection.layVolume}
+          type="lay"
+          onClick={() =>
+            openBetSlip({
+              marketId: market.id,
+              marketName: market.eventName,
+              selectionId: selection.id,
+              selectionName: selection.name,
+              type: "lay",
+              odds: selection.layOdds,
+            })
+          }
+          disabled={disabled}
+          ocid={`market.lay_button.${rowIndex + 1}`}
+        />
+        {/* 2nd lay (semi-faded) */}
+        <div className="hidden sm:block opacity-75">
+          <OddsCell
+            odds={Number((selection.layOdds + 0.02).toFixed(2))}
+            volume={Math.floor(selection.layVolume * 0.65)}
+            type="lay"
+            onClick={() =>
+              openBetSlip({
+                marketId: market.id,
+                marketName: market.eventName,
+                selectionId: selection.id,
+                selectionName: selection.name,
+                type: "lay",
+                odds: Number((selection.layOdds + 0.02).toFixed(2)),
+              })
+            }
+            disabled={disabled}
+            ocid={`market.lay_button.${rowIndex + 1}`}
+          />
+        </div>
+        {/* 3rd lay (faded) */}
+        <div className="hidden lg:block opacity-50">
+          <OddsCell
+            odds={Number((selection.layOdds + 0.04).toFixed(2))}
+            volume={Math.floor(selection.layVolume * 0.4)}
+            type="lay"
+            onClick={() =>
+              openBetSlip({
+                marketId: market.id,
+                marketName: market.eventName,
+                selectionId: selection.id,
+                selectionName: selection.name,
+                type: "lay",
+                odds: Number((selection.layOdds + 0.04).toFixed(2)),
+              })
+            }
+            disabled={disabled}
+            ocid={`market.lay_button.${rowIndex + 1}`}
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -196,21 +367,21 @@ function FancyBetRow({ fm, index }: FancyBetRowProps) {
               onClick={() => setOpenSide(openSide === "no" ? null : "no")}
               className="flex flex-col items-center w-16 h-12 rounded-lg justify-center transition-all hover:brightness-110 active:scale-95"
               style={{
-                background: "oklch(var(--lay) / 0.15)",
-                border: "1px solid oklch(var(--lay) / 0.35)",
+                background: "oklch(0.62 0.22 20 / 0.15)",
+                border: "1px solid oklch(0.62 0.22 20 / 0.35)",
               }}
             >
               <span
                 className="text-[10px] font-bold font-mono"
-                style={{ color: "oklch(var(--lay))" }}
+                style={{ color: "oklch(0.75 0.22 20)" }}
               >
                 {fm.noOdds}
               </span>
               <span
                 className="text-[9px]"
-                style={{ color: "oklch(var(--lay) / 0.7)" }}
+                style={{ color: "oklch(0.75 0.22 20 / 0.7)" }}
               >
-                {fm.noRuns} NO
+                {fm.noRuns} Khai
               </span>
             </button>
 
@@ -221,21 +392,21 @@ function FancyBetRow({ fm, index }: FancyBetRowProps) {
               onClick={() => setOpenSide(openSide === "yes" ? null : "yes")}
               className="flex flex-col items-center w-16 h-12 rounded-lg justify-center transition-all hover:brightness-110 active:scale-95"
               style={{
-                background: "oklch(var(--back) / 0.15)",
-                border: "1px solid oklch(var(--back) / 0.35)",
+                background: "oklch(0.55 0.18 240 / 0.15)",
+                border: "1px solid oklch(0.55 0.18 240 / 0.35)",
               }}
             >
               <span
                 className="text-[10px] font-bold font-mono"
-                style={{ color: "oklch(var(--back))" }}
+                style={{ color: "oklch(0.75 0.18 240)" }}
               >
                 {fm.yesOdds}
               </span>
               <span
                 className="text-[9px]"
-                style={{ color: "oklch(var(--back) / 0.7)" }}
+                style={{ color: "oklch(0.75 0.18 240 / 0.7)" }}
               >
-                {fm.yesRuns} YES
+                {fm.yesRuns} Lgao
               </span>
             </button>
           </div>
@@ -258,8 +429,8 @@ function FancyBetRow({ fm, index }: FancyBetRowProps) {
               style={{
                 background:
                   openSide === "yes"
-                    ? "oklch(var(--back) / 0.06)"
-                    : "oklch(var(--lay) / 0.06)",
+                    ? "oklch(0.55 0.18 240 / 0.06)"
+                    : "oklch(0.62 0.22 20 / 0.06)",
               }}
             >
               <div className="flex-1 space-y-1">
@@ -268,11 +439,11 @@ function FancyBetRow({ fm, index }: FancyBetRowProps) {
                   style={{
                     color:
                       openSide === "yes"
-                        ? "oklch(var(--back))"
-                        : "oklch(var(--lay))",
+                        ? "oklch(0.75 0.18 240)"
+                        : "oklch(0.75 0.22 20)",
                   }}
                 >
-                  {openSide.toUpperCase()} @{" "}
+                  {openSide === "yes" ? "LGAO" : "KHAI"} @{" "}
                   {openSide === "yes"
                     ? `${fm.yesOdds} runs: ${fm.yesRuns}`
                     : `${fm.noOdds} runs: ${fm.noRuns}`}
@@ -313,8 +484,8 @@ function FancyBetRow({ fm, index }: FancyBetRowProps) {
                   style={{
                     background:
                       openSide === "yes"
-                        ? "oklch(var(--back))"
-                        : "oklch(var(--lay))",
+                        ? "oklch(0.55 0.18 240)"
+                        : "oklch(0.62 0.22 20)",
                   }}
                   data-ocid={`fancy.confirm_button.${index + 1}`}
                 >
@@ -400,15 +571,15 @@ function FancySection({ matchId }: { matchId: string }) {
         </div>
         <div
           className="w-16 text-center text-[9px] font-bold uppercase mr-1.5"
-          style={{ color: "oklch(var(--lay))" }}
+          style={{ color: "oklch(0.75 0.22 20)" }}
         >
-          NO
+          Khai
         </div>
         <div
           className="w-16 text-center text-[9px] font-bold uppercase"
-          style={{ color: "oklch(var(--back))" }}
+          style={{ color: "oklch(0.75 0.18 240)" }}
         >
-          YES
+          Lgao
         </div>
       </div>
 
@@ -428,107 +599,126 @@ function FancySection({ matchId }: { matchId: string }) {
   );
 }
 
+// ─── 1xBet-Style Market Card ───────────────────────────────────────────────────
 interface MarketCardProps {
   market: Market;
   index: number;
 }
 
 function MarketCard({ market, index }: MarketCardProps) {
-  const statusColors = {
-    open: "oklch(var(--status-open))",
-    suspended: "oklch(var(--status-suspended))",
-    closed: "oklch(var(--status-closed))",
-    settled: "oklch(var(--status-settled))",
-  };
+  const { isLive, label: timeLabel } = formatMatchTime(market.createdAt);
+  const leagueName = getLeagueName(market);
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.05 }}
+      transition={{ delay: index * 0.04 }}
       data-ocid={`market.item.${index + 1}`}
-      className="rounded-xl border border-border bg-card overflow-hidden hover:border-gold/20 transition-all duration-200"
-      style={{ boxShadow: "0 4px 20px rgba(0,0,0,0.25)" }}
+      className="rounded-lg border border-border bg-card overflow-hidden hover:border-border/70 transition-colors duration-200"
+      style={{ background: "oklch(0.11 0.015 265)" }}
     >
-      {/* Market Header */}
+      {/* Compact Match Header */}
       <div
-        className="flex items-center justify-between px-4 py-3 border-b border-border"
-        style={{ background: "oklch(var(--secondary) / 0.5)" }}
+        className="flex items-center gap-2 px-3 py-2 border-b border-border/50"
+        style={{ background: "oklch(0.13 0.018 265)" }}
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-base">{SPORT_ICONS[market.sport]}</span>
-          <div className="min-w-0">
-            <p
-              className="text-xs font-medium truncate"
-              style={{ color: SPORT_COLORS[market.sport] }}
-            >
-              {market.sport.charAt(0).toUpperCase() + market.sport.slice(1)}
-            </p>
-            <h3 className="text-sm font-semibold text-foreground truncate">
-              {market.eventName}
-            </h3>
-          </div>
-        </div>
+        {/* Sport icon + league */}
+        <span className="text-sm shrink-0">{SPORT_ICONS[market.sport]}</span>
+        <span
+          className="text-[11px] font-semibold truncate flex-1"
+          style={{ color: SPORT_COLORS[market.sport] }}
+        >
+          {leagueName}
+        </span>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {market.status === "open" && (
-            <div className="flex items-center gap-1">
-              <div
-                className="w-1.5 h-1.5 rounded-full animate-pulse"
-                style={{ background: statusColors.open }}
-              />
-              <span
-                className="text-xs font-medium"
-                style={{ color: statusColors.open }}
-              >
-                LIVE
-              </span>
-            </div>
-          )}
+        {/* In-Play / Time badge */}
+        {isLive ? (
+          <div className="flex items-center gap-1 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+            <span className="text-[10px] font-bold text-rose-400">IN-PLAY</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1 shrink-0 text-muted-foreground">
+            <Clock className="w-3 h-3" />
+            <span className="text-[10px]">{timeLabel}</span>
+          </div>
+        )}
+
+        {/* Suspended/Settled overlay indicator */}
+        {market.status !== "open" && (
           <Badge
-            className="text-[10px] px-1.5 uppercase font-bold"
+            className="text-[9px] px-1 py-0 h-4 uppercase font-bold shrink-0"
             style={{
-              background: `${statusColors[market.status]}22`,
-              color: statusColors[market.status],
-              borderColor: `${statusColors[market.status]}44`,
+              background:
+                market.status === "suspended"
+                  ? "oklch(0.62 0.22 20 / 0.2)"
+                  : "oklch(0.5 0.01 265 / 0.2)",
+              color:
+                market.status === "suspended"
+                  ? "oklch(0.75 0.22 20)"
+                  : "oklch(0.65 0.01 265)",
+              borderColor: "transparent",
             }}
             variant="outline"
           >
             {market.status}
           </Badge>
+        )}
+      </div>
+
+      {/* Match name row */}
+      <div className="flex items-center justify-between px-3 py-2">
+        <h3 className="text-sm font-bold text-foreground truncate flex-1">
+          {market.eventName}
+        </h3>
+        <span className="text-[10px] text-muted-foreground ml-2 shrink-0">
+          {market.selections.length} runners
+        </span>
+      </div>
+
+      {/* Exchange Table Header */}
+      <div
+        className="flex items-center border-t border-b border-border/30"
+        style={{ background: "oklch(0.09 0.01 265)" }}
+      >
+        <div className="flex-1 px-3 py-1 text-[10px] text-muted-foreground font-medium uppercase">
+          Selection
+        </div>
+        {/* Back / Lagao column header */}
+        <div
+          data-ocid="markets.back_header"
+          className="px-3 py-1 text-[10px] font-bold uppercase text-center"
+          style={{
+            background: "oklch(0.55 0.18 240 / 0.12)",
+            color: "oklch(0.75 0.18 240)",
+            minWidth: "120px",
+          }}
+        >
+          ← Lagao
+        </div>
+        {/* Lay / Khai column header */}
+        <div
+          data-ocid="markets.lay_header"
+          className="px-3 py-1 text-[10px] font-bold uppercase text-center"
+          style={{
+            background: "oklch(0.62 0.22 20 / 0.12)",
+            color: "oklch(0.75 0.22 20)",
+            minWidth: "120px",
+          }}
+        >
+          Khai →
         </div>
       </div>
 
-      {/* Column Headers */}
-      <div className="flex items-center px-4 py-1.5 bg-secondary/20">
-        <div className="flex-1 text-[10px] text-muted-foreground font-medium">
-          SELECTION
-        </div>
-        <div className="hidden md:block w-20 text-right text-[10px] text-muted-foreground mr-1">
-          VOLUME
-        </div>
-        <div
-          className="w-16 mx-1 text-center text-[10px] font-bold"
-          style={{ color: "oklch(var(--back))" }}
-        >
-          BACK
-        </div>
-        <div
-          className="w-16 mx-1 text-center text-[10px] font-bold"
-          style={{ color: "oklch(var(--lay))" }}
-        >
-          LAY
-        </div>
-      </div>
-
-      {/* Selections */}
-      <div className="divide-y divide-border/50">
+      {/* Selection Rows */}
+      <div>
         {market.selections.map((selection, i) => (
-          <SelectionRow
+          <ExchangeRow
             key={selection.id}
             selection={selection}
             market={market}
-            index={i}
+            rowIndex={i}
           />
         ))}
       </div>
@@ -541,28 +731,89 @@ function MarketCard({ market, index }: MarketCardProps) {
 
 function MarketSkeleton() {
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
-      <div className="px-4 py-3 border-b border-border bg-secondary/50">
-        <div className="flex items-center gap-2">
-          <Skeleton className="w-6 h-6 rounded" />
-          <div className="space-y-1.5">
-            <Skeleton className="w-16 h-3" />
-            <Skeleton className="w-40 h-4" />
-          </div>
-        </div>
+    <div
+      className="rounded-lg border border-border bg-card overflow-hidden"
+      style={{ background: "oklch(0.11 0.015 265)" }}
+    >
+      <div
+        className="px-3 py-2 border-b border-border/50 flex items-center gap-2"
+        style={{ background: "oklch(0.13 0.018 265)" }}
+      >
+        <Skeleton className="w-4 h-4 rounded" />
+        <Skeleton className="w-32 h-3" />
+        <Skeleton className="w-14 h-3 ml-auto" />
+      </div>
+      <div className="px-3 py-2">
+        <Skeleton className="w-48 h-4" />
       </div>
       {[0, 1, 2].map((i) => (
         <div
           key={i}
-          className="flex items-center justify-between px-4 py-3 border-b border-border/50"
+          className="flex items-center gap-2 px-3 py-2.5 border-t border-border/30"
         >
-          <Skeleton className="w-24 h-4" />
-          <div className="flex gap-2">
-            <Skeleton className="w-16 h-12 rounded-lg" />
-            <Skeleton className="w-16 h-12 rounded-lg" />
+          <div className="flex items-center gap-2 flex-1">
+            <Skeleton className="w-6 h-6 rounded-full" />
+            <Skeleton className="w-28 h-4" />
+          </div>
+          <div className="flex gap-0.5">
+            <Skeleton className="w-[52px] h-11 rounded" />
+            <Skeleton className="w-[52px] h-11 rounded" />
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ─── Section Header (In-Play / Upcoming) ──────────────────────────────────────
+function SectionHeader({
+  type,
+  count,
+}: {
+  type: "inplay" | "upcoming";
+  count: number;
+}) {
+  if (type === "inplay") {
+    return (
+      <div
+        className="flex items-center gap-2 px-3 py-2 rounded-lg"
+        style={{
+          background: "oklch(0.62 0.22 20 / 0.08)",
+          border: "1px solid oklch(0.62 0.22 20 / 0.2)",
+        }}
+        data-ocid="markets.inplay_section"
+      >
+        <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+        <Activity className="w-3.5 h-3.5 text-rose-400" />
+        <span className="text-xs font-bold text-rose-400">IN-PLAY</span>
+        <span className="text-xs text-muted-foreground ml-1">
+          {count} event{count !== 1 ? "s" : ""}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-2 rounded-lg"
+      style={{
+        background: "oklch(0.55 0.18 240 / 0.08)",
+        border: "1px solid oklch(0.55 0.18 240 / 0.2)",
+      }}
+      data-ocid="markets.upcoming_section"
+    >
+      <Clock
+        className="w-3.5 h-3.5"
+        style={{ color: "oklch(0.75 0.18 240)" }}
+      />
+      <span
+        className="text-xs font-bold"
+        style={{ color: "oklch(0.75 0.18 240)" }}
+      >
+        UPCOMING
+      </span>
+      <span className="text-xs text-muted-foreground ml-1">
+        {count} event{count !== 1 ? "s" : ""}
+      </span>
     </div>
   );
 }
@@ -614,101 +865,122 @@ export function MarketsPage() {
     (m) => sportFilter === "all" || m.sport === sportFilter,
   );
 
-  const openMarketsCount = markets.filter((m) => m.status === "open").length;
+  // Split into live and upcoming
+  const now = new Date();
+  const liveMarkets = filteredMarkets.filter(
+    (m) => new Date(m.createdAt) <= now,
+  );
+  const upcomingMarkets = filteredMarkets.filter(
+    (m) => new Date(m.createdAt) > now,
+  );
+
+  // Count stats per sport for tabs
+  const sportCounts: Record<string, { live: number; upcoming: number }> = {
+    all: { live: liveMarkets.length, upcoming: upcomingMarkets.length },
+  };
+  for (const sport of ["cricket", "football", "tennis"] as SportType[]) {
+    const sportLive = liveMarkets.filter((m) => m.sport === sport).length;
+    const sportUpcoming = upcomingMarkets.filter(
+      (m) => m.sport === sport,
+    ).length;
+    sportCounts[sport] = { live: sportLive, upcoming: sportUpcoming };
+  }
+
+  const totalEvents = filteredMarkets.length;
 
   return (
-    <div className="p-4 max-w-4xl mx-auto">
-      {/* Page Header */}
-      <div className="flex items-center justify-between mb-5">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Trophy className="w-5 h-5 text-gold" />
-          <h1 className="text-lg font-bold text-foreground">Markets</h1>
-          <Badge
-            className="text-[10px] px-1.5"
-            style={{
-              background: "oklch(var(--status-open) / 0.15)",
-              color: "oklch(var(--status-open))",
-              borderColor: "oklch(var(--status-open) / 0.3)",
-            }}
-            variant="outline"
-          >
-            <Zap className="w-2.5 h-2.5 mr-1" />
-            {openMarketsCount} Live
-          </Badge>
+    <div className="p-3 max-w-4xl mx-auto">
+      {/* Page Header — compact 1xBet style */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Trophy className="w-4 h-4 text-gold" />
+          <h1 className="text-base font-bold text-foreground">Sports</h1>
           {isApiData && (
             <Badge
-              className="text-[10px] px-1.5 animate-pulse"
+              className="text-[10px] px-1.5 gap-1 animate-pulse"
               style={{
                 background: "oklch(0.55 0.18 240 / 0.15)",
-                color: "oklch(0.55 0.18 240)",
+                color: "oklch(0.75 0.18 240)",
                 borderColor: "oklch(0.55 0.18 240 / 0.3)",
               }}
               variant="outline"
               data-ocid="markets.api_badge"
             >
-              <Radio className="w-2.5 h-2.5 mr-1" />
+              <Radio className="w-2.5 h-2.5" />
               LIVE · TheOddsAPI
             </Badge>
           )}
         </div>
 
-        {/* Legend */}
-        <div className="hidden sm:flex items-center gap-3 text-xs text-muted-foreground">
-          <div className="flex items-center gap-1.5">
-            <div
-              className="w-3 h-3 rounded"
-              style={{
-                background: "oklch(var(--back) / 0.4)",
-                border: "1px solid oklch(var(--back) / 0.6)",
-              }}
-            />
-            <span>Back</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div
-              className="w-3 h-3 rounded"
-              style={{
-                background: "oklch(var(--lay) / 0.4)",
-                border: "1px solid oklch(var(--lay) / 0.6)",
-              }}
-            />
-            <span>Lay</span>
-          </div>
+        {/* Summary stats */}
+        <div className="flex items-center gap-2 text-[11px]">
+          {liveMarkets.length > 0 && (
+            <span className="flex items-center gap-1 text-rose-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+              {liveMarkets.length} In-Play
+            </span>
+          )}
+          {upcomingMarkets.length > 0 && (
+            <span className="text-muted-foreground">
+              {upcomingMarkets.length} Upcoming
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Sport Filter Tabs */}
-      <div className="flex gap-1.5 mb-5 overflow-x-auto pb-1">
-        {SPORT_TABS.map((tab) => (
-          <button
-            type="button"
-            key={tab.value}
-            data-ocid="markets.tab"
-            onClick={() => setSportFilter(tab.value)}
-            className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-150 ${
-              sportFilter === tab.value
-                ? "bg-gold text-background"
-                : "bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80"
-            }`}
-          >
-            {tab.value !== "all" && (
-              <span className="mr-1">
-                {SPORT_ICONS[tab.value as SportType]}
-              </span>
-            )}
-            {tab.label}
-          </button>
-        ))}
+      {/* Sport Filter Tabs — 1xBet style with counts */}
+      <div className="flex gap-0.5 mb-3 border-b border-border/50 overflow-x-auto pb-0">
+        {SPORT_TABS.map((tab) => {
+          const counts = sportCounts[tab.value] ?? { live: 0, upcoming: 0 };
+          const total = counts.live + counts.upcoming;
+          const isActive = sportFilter === tab.value;
+          return (
+            <button
+              type="button"
+              key={tab.value}
+              data-ocid="markets.tab"
+              onClick={() => setSportFilter(tab.value)}
+              className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 text-xs font-semibold transition-all duration-150 border-b-2 rounded-none"
+              style={{
+                borderBottomColor: isActive
+                  ? "oklch(var(--gold))"
+                  : "transparent",
+                color: isActive
+                  ? "oklch(var(--gold))"
+                  : "oklch(var(--muted-foreground))",
+                background: "transparent",
+              }}
+            >
+              <span>{tab.icon}</span>
+              <span>{tab.label}</span>
+              {total > 0 && (
+                <span
+                  className="px-1 py-0.5 rounded text-[9px] font-bold"
+                  style={{
+                    background: isActive
+                      ? "oklch(var(--gold) / 0.2)"
+                      : "oklch(var(--border))",
+                    color: isActive
+                      ? "oklch(var(--gold))"
+                      : "oklch(var(--muted-foreground))",
+                  }}
+                >
+                  {total}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Market Cards */}
+      {/* Market List */}
       {firstLoad ? (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {[0, 1, 2].map((i) => (
             <MarketSkeleton key={i} />
           ))}
         </div>
-      ) : filteredMarkets.length === 0 ? (
+      ) : totalEvents === 0 ? (
         <div
           data-ocid="markets.empty_state"
           className="flex flex-col items-center justify-center py-16 text-center"
@@ -722,10 +994,41 @@ export function MarketsPage() {
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {filteredMarkets.map((market, i) => (
-            <MarketCard key={market.id} market={market} index={i} />
-          ))}
+        <div className="space-y-2">
+          {/* IN-PLAY section */}
+          {liveMarkets.length > 0 && (
+            <div className="space-y-2">
+              <SectionHeader type="inplay" count={liveMarkets.length} />
+              {liveMarkets.map((market, i) => (
+                <MarketCard key={market.id} market={market} index={i} />
+              ))}
+            </div>
+          )}
+
+          {/* UPCOMING section */}
+          {upcomingMarkets.length > 0 && (
+            <div className="space-y-2 mt-3">
+              <SectionHeader type="upcoming" count={upcomingMarkets.length} />
+              {upcomingMarkets.map((market, i) => (
+                <MarketCard
+                  key={market.id}
+                  market={market}
+                  index={liveMarkets.length + i}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* If no live/upcoming split (e.g. store data with no createdAt times) */}
+          {liveMarkets.length === 0 &&
+            upcomingMarkets.length === 0 &&
+            filteredMarkets.length > 0 && (
+              <div className="space-y-2">
+                {filteredMarkets.map((market, i) => (
+                  <MarketCard key={market.id} market={market} index={i} />
+                ))}
+              </div>
+            )}
         </div>
       )}
     </div>

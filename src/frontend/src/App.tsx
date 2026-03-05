@@ -8,6 +8,7 @@ import { AdminCrashPage } from "@/pages/admin/AdminCrashPage";
 import { AdminLayout } from "@/pages/admin/AdminLayout";
 import { AdminMarketsPage } from "@/pages/admin/AdminMarketsPage";
 import { AdminUsersPage } from "@/pages/admin/AdminUsersPage";
+import { MasterDashboard } from "@/pages/master/MasterDashboard";
 import { SuperAdminDashboard } from "@/pages/superadmin/SuperAdminDashboard";
 import { AccountPage } from "@/pages/user/AccountPage";
 import { CasinoPage } from "@/pages/user/CasinoPage";
@@ -47,6 +48,16 @@ function App() {
     return (
       <>
         <LoginPage />
+        <Toaster {...toasterProps} />
+      </>
+    );
+  }
+
+  // Master
+  if (currentUser.role === "master") {
+    return (
+      <>
+        <MasterDashboard />
         <Toaster {...toasterProps} />
       </>
     );

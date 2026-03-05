@@ -12,26 +12,53 @@ import { motion } from "motion/react";
 export function AccountPage() {
   const currentUser = useStore((s) => s.currentUser);
   const allBets = useStore((s) => s.bets);
+  const allCasino = useStore((s) => s.casinoHistory);
+  const allCrash = useStore((s) => s.crashHistory);
 
   if (!currentUser) return null;
 
-  const userBets = allBets.filter((b) => b.userId === currentUser.id);
+  const uid = currentUser.id;
+
+  // Sports bets
+  const userBets = allBets.filter((b) => b.userId === uid);
   const settledBets = userBets.filter((b) => b.status === "settled");
   const activeBets = userBets.filter(
     (b) => b.status === "matched" || b.status === "unmatched",
   );
 
-  const totalStaked = userBets.reduce((sum, b) => sum + b.stake, 0);
-  const totalWon = settledBets
-    .filter((b) => b.pnl > 0)
-    .reduce((sum, b) => sum + b.pnl, 0);
-  const totalLost = settledBets
-    .filter((b) => b.pnl < 0)
-    .reduce((sum, b) => sum + Math.abs(b.pnl), 0);
-  const netPnl = settledBets.reduce((sum, b) => sum + b.pnl, 0);
+  // Casino & crash
+  const userCasino = allCasino.filter((e) => e.userId === uid);
+  const userCrash = allCrash.filter((e) => e.userId === uid);
+
+  // Combined stats
+  const totalBets = userBets.length + userCasino.length + userCrash.length;
+
+  const sportsPnl = settledBets.reduce((sum, b) => sum + b.pnl, 0);
+  const casinoPnl = userCasino.reduce((sum, e) => sum + e.pnl, 0);
+  const crashPnl = userCrash.reduce((sum, e) => sum + e.pnl, 0);
+  const netPnl = sportsPnl + casinoPnl + crashPnl;
+
+  const totalStaked =
+    userBets.reduce((sum, b) => sum + b.stake, 0) +
+    userCasino.reduce((sum, e) => sum + e.stake, 0) +
+    userCrash.reduce((sum, e) => sum + e.stake, 0);
+
+  // Win/loss across all categories
+  const allSettledPnls = [
+    ...settledBets.map((b) => b.pnl),
+    ...userCasino.map((e) => e.pnl),
+    ...userCrash.map((e) => e.pnl),
+  ];
+  const totalWon = allSettledPnls
+    .filter((p) => p > 0)
+    .reduce((sum, p) => sum + p, 0);
+  const totalLost = allSettledPnls
+    .filter((p) => p < 0)
+    .reduce((sum, p) => sum + Math.abs(p), 0);
   const winRate =
-    settledBets.length > 0
-      ? (settledBets.filter((b) => b.pnl > 0).length / settledBets.length) * 100
+    allSettledPnls.length > 0
+      ? (allSettledPnls.filter((p) => p > 0).length / allSettledPnls.length) *
+        100
       : 0;
 
   const stats = [
@@ -161,9 +188,11 @@ export function AccountPage() {
         </h3>
         <div className="space-y-3">
           {[
-            { label: "Total Bets", value: userBets.length },
-            { label: "Active Bets", value: activeBets.length },
-            { label: "Settled Bets", value: settledBets.length },
+            { label: "Total Bets (All)", value: totalBets },
+            { label: "Sports Bets", value: userBets.length },
+            { label: "Casino Rounds", value: userCasino.length },
+            { label: "Crash Games", value: userCrash.length },
+            { label: "Active Sports Bets", value: activeBets.length },
             {
               label: "Total Won",
               value: `₹${totalWon.toFixed(2)}`,
@@ -198,7 +227,7 @@ export function AccountPage() {
       </motion.div>
 
       {/* Win Rate Bar */}
-      {settledBets.length > 0 && (
+      {allSettledPnls.length > 0 && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

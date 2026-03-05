@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   Trash2,
   TrendingUp,
+  UserPlus,
   Users,
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -58,6 +59,7 @@ function CreateAdminDialog() {
             background:
               "linear-gradient(135deg, oklch(var(--gold)), oklch(var(--accent)))",
           }}
+          data-ocid="superadmin.create_admin.open_modal_button"
         >
           <Plus className="w-4 h-4 mr-1.5" />
           Create Admin
@@ -77,6 +79,7 @@ function CreateAdminDialog() {
               onChange={(e) => setUsername(e.target.value)}
               placeholder="Admin username"
               className="bg-input border-border h-9"
+              data-ocid="superadmin.create_admin.input"
               required
             />
           </div>
@@ -116,6 +119,90 @@ function CreateAdminDialog() {
   );
 }
 
+function CreateUserDialog() {
+  const createUser = useStore((s) => s.createUser);
+  const currentUser = useStore((s) => s.currentUser);
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!username.trim() || !password.trim()) return;
+    createUser(username, password, currentUser?.id ?? "");
+    toast.success(`User account created: ${username}`);
+    setOpen(false);
+    setUsername("");
+    setPassword("");
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          className="border-border text-muted-foreground hover:text-foreground"
+          data-ocid="superadmin.create_user.open_modal_button"
+        >
+          <UserPlus className="w-4 h-4 mr-1.5" />
+          Create User
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="bg-card border-border max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="text-foreground">
+            Create User Account
+          </DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Username</Label>
+            <Input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="User username"
+              className="bg-input border-border h-9"
+              data-ocid="superadmin.create_user.input"
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Password</Label>
+            <Input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="User password"
+              className="bg-input border-border h-9"
+              required
+            />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setOpen(false)}
+              data-ocid="superadmin.create_user_dialog.cancel_button"
+              className="text-muted-foreground"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              data-ocid="superadmin.create_user_dialog.confirm_button"
+              className="text-background font-semibold"
+              style={{ background: "oklch(var(--back))" }}
+            >
+              Create User
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function AdminsSection() {
   const users = useStore((s) => s.users);
   const currentUser = useStore((s) => s.currentUser);
@@ -136,7 +223,10 @@ function AdminsSection() {
             {admins.length} admins
           </Badge>
         </div>
-        <CreateAdminDialog />
+        <div className="flex items-center gap-2">
+          <CreateUserDialog />
+          <CreateAdminDialog />
+        </div>
       </div>
 
       {admins.length === 0 ? (
