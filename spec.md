@@ -1,35 +1,39 @@
 # KINGBET
 
 ## Current State
-- Landing page exists with hero, sports preview, casino, crash games, FAQ, footer sections
-- Sports preview uses card-based layout with Back/Lay buttons
-- Markets page has 1xBet-style exchange layout with IN-PLAY/UPCOMING sections
-- Back/Lay buttons use blue/pink colors without "Lagao/Khai" Indian labels
-- Landing page "Live Markets" section shows generic card grid, not a compact Diamond Exchange table format
+- 50 games exist in GamesLobby.tsx with full implementations for Mines, Limbo, CoinFlip, Diamonds, Tower, Stairs, HiLo, Blackjack, Keno, ScratchCards, SattaMatka, WheelOfFortune
+- Remaining ~35 games use SimpleGame template (no animations, direct result show)
+- CasinoPage.tsx already has proper auto-loop with betting window (15s bet → 1s closed → 4s result → 2s wait)
+- Crash/Aviator already auto-loops
+- Plinko and Dice are in CrashPage.tsx
 
 ## Requested Changes (Diff)
 
 ### Add
-- Diamond Exchange / 1xBet-style compact table in landing page "Live Sports" section (replacing card grid):
-  - Table headers: Event | 1 | X | 2 with Back=blue, Lay=pink column backgrounds
-  - Each row: sport emoji, match name, competition, LIVE/Soon badge, odds buttons, animated dot for live
-  - "Lagao" label on Back buttons, "Khai" label on Lay buttons (compact Indian exchange terminology)
-- Sports categories grid on landing page (Cricket, Football, Tennis, Basketball, Horse Racing, Kabaddi with event counts)
-- "Lagao / Khai" column headers in Markets page exchange table (replacing "← Back" / "Lay →")
-- "Lagao" / "Khai" labels on OddsCell buttons in Markets page
+- Animations to ALL SimpleGame template games: result reveal animation (spinning/pulsing/morphing icon + scale effect), result card flip animation, "rolling" state visual feedback with animated spinner/icon
+- Auto-loop system for ALL games in GamesLobby (instant/cards/table/arcade/advanced) — each game should run on a round timer (15s betting window, auto-result, 2s wait, repeat) — user places bet during window, if they miss it they wait for next round
+- For card games (Baccarat, Dragon Tiger, Teen Patti, etc.): card deal animation using Framer Motion slide-in
+- For dice games (Craps, Sic Bo, Hash Dice): dice roll shake animation
+- For crash-style games in arcade (SpaceXY, JetX, Kamikaze): multiplier counter animation
+- For Ball & Cup: cup shuffle animation
+- Result outcome visual: WIN = green glow pulse, LOSS = red shake
 
 ### Modify
-- Landing page LiveSportsPreview section: replace 3-column card grid with compact horizontal table format matching Diamond Exchange / 1xBet India style
-- MarketCard exchange table header: change "← Back" to "← Lagao (Back)" and "Lay →" to "Khai (Lay) →"
-- OddsCell: no visual change needed, just header labels update
-- Landing page hero CTA buttons: "Start Trading" and "Get Your ID" style consistent with new layout
+- SimpleGame component: upgrade from basic "Rolling..." text to animated result reveal with game-specific icon animations
+- All simple game option buttons: add hover scale, active press effect
+- GamesLobby: wrap game content in auto-loop hook so rounds cycle automatically
+- WinOverlay: make confetti more dramatic (more particles, longer duration)
 
 ### Remove
-- Nothing removed, only enhancing existing sections
+- Nothing removed
 
 ## Implementation Plan
-1. Replace `LiveSportsPreview` component in LandingPage.tsx with Diamond Exchange compact table format
-2. Add Sports Categories section to landing page (between live markets and casino)
-3. Update `MarketCard` exchange table headers in MarketsPage.tsx to show "Lagao (Back)" and "Khai (Lay)"
-4. Update fancy/session column headers in FancySection to show "KHAI" and "LGAO" instead of "NO" and "YES"
-5. Ensure btn-back and btn-lay CSS classes are available in global CSS or inline styled consistently
+1. Create enhanced auto-loop hook `useGameLoop` that works for all simple games (15s betting → result → 2s next round auto-cycle)
+2. Upgrade SimpleGame component with:
+   - Animated result display (icon spin/bounce + scale reveal)
+   - Win glow / Loss shake effects using Framer Motion
+   - Game-specific result icons for each game type
+   - Auto-loop integration
+3. Add animations to individual complex games that were missing them (WheelOfFortune result spin, Stairs climb bounce already exists)
+4. Enhance WinOverlay with more confetti particles and longer animation
+5. Make all GamesLobby games show live "Round in progress" status indicator on lobby cards

@@ -4,7 +4,13 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { useStore } from "@/store/useStore";
 import { AnimatePresence, motion } from "motion/react";
-import { type ReactNode, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
@@ -19,29 +25,252 @@ function WinOverlay({ show }: { show: boolean }) {
       exit={{ opacity: 0 }}
       className="fixed inset-0 pointer-events-none z-50 flex items-center justify-center"
     >
-      <div className="text-center">
-        {Array.from({ length: 30 }, (_, i) => (
-          <motion.div
-            key={`confetti-${i}`}
-            className="absolute w-2 h-2 rounded-full"
-            style={{
-              background:
-                i % 3 === 0
-                  ? "oklch(0.80 0.18 85)"
-                  : i % 3 === 1
-                    ? "oklch(0.72 0.18 60)"
-                    : "oklch(0.65 0.18 145)",
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-            }}
-            initial={{ scale: 0, y: 0 }}
-            animate={{ scale: [0, 1, 0], y: [-100, -200, -300] }}
-            transition={{ duration: 1.5, delay: Math.random() * 0.5 }}
-          />
-        ))}
-      </div>
+      {/* Golden glow ring behind text */}
+      <motion.div
+        initial={{ scale: 0, opacity: 0 }}
+        animate={{ scale: [0, 1.4, 1.2], opacity: [0, 0.6, 0.3] }}
+        transition={{ duration: 0.6, type: "spring", bounce: 0.4 }}
+        className="absolute w-64 h-64 rounded-full"
+        style={{
+          background:
+            "radial-gradient(circle, oklch(0.80 0.18 85 / 0.5) 0%, transparent 70%)",
+          boxShadow: "0 0 80px 40px oklch(0.80 0.18 85 / 0.3)",
+        }}
+      />
+      {/* YOU WIN! text */}
+      <motion.div
+        initial={{ scale: 0, rotate: -10 }}
+        animate={{ scale: [0, 1.3, 1], rotate: [-10, 5, 0] }}
+        transition={{ duration: 0.5, type: "spring", bounce: 0.5 }}
+        className="relative z-10 text-center"
+      >
+        <div
+          className="text-4xl font-black tracking-widest px-6 py-3 rounded-2xl"
+          style={{
+            background:
+              "linear-gradient(135deg, oklch(0.80 0.18 85), oklch(0.72 0.18 60))",
+            color: "#000",
+            boxShadow: "0 0 30px oklch(0.80 0.18 85 / 0.6)",
+          }}
+        >
+          YOU WIN! 🎉
+        </div>
+      </motion.div>
+      {/* Confetti particles */}
+      {Array.from({ length: 60 }, (_, i) => (
+        <motion.div
+          key={`cfti-${i}-${i * 37 + 11}`}
+          className="absolute rounded-full"
+          style={{
+            width: i % 4 === 0 ? "10px" : "6px",
+            height: i % 4 === 0 ? "10px" : "6px",
+            background:
+              i % 4 === 0
+                ? "oklch(0.80 0.18 85)"
+                : i % 4 === 1
+                  ? "oklch(0.72 0.18 60)"
+                  : i % 4 === 2
+                    ? "oklch(0.65 0.18 145)"
+                    : "oklch(0.70 0.20 30)",
+            left: `${(i * 1.67) % 100}%`,
+            top: `${(i * 2.3) % 60}%`,
+          }}
+          initial={{ scale: 0, y: 0, opacity: 1 }}
+          animate={{
+            scale: [0, 1.2, 0.8, 0],
+            y: [0, -(80 + (i % 5) * 40), -(160 + (i % 5) * 60), -300],
+            x: [(i % 2 === 0 ? 1 : -1) * (i % 30) * 2, 0],
+            opacity: [1, 1, 0.5, 0],
+          }}
+          transition={{
+            duration: 2.5,
+            delay: (i % 10) * 0.05,
+            ease: "easeOut",
+          }}
+        />
+      ))}
     </motion.div>
   );
+}
+
+// ─── Auto-loop hook for SimpleGame ───────────────────────────────────────────
+type SimplePhase = "betting" | "revealing" | "wait";
+
+const SIMPLE_PHASE_DURATIONS: Record<SimplePhase, number> = {
+  betting: 15,
+  revealing: 3,
+  wait: 2,
+};
+
+interface SimpleLoopState {
+  phase: SimplePhase;
+  countdown: number;
+  roundId: number;
+  resultValue: string | null;
+  resultWon: boolean;
+  resultPayout: number;
+}
+
+interface PendingSimpleBet {
+  choice: string;
+  mult: number;
+  stake: number;
+}
+
+function useSimpleGameLoop(
+  gameName: string,
+  options: { label: string; value: string; color: string; mult: number }[],
+) {
+  const { currentUser, debitUserBalance, creditUserBalance, addCasinoHistory } =
+    useStore();
+
+  const [state, setState] = useState<SimpleLoopState>({
+    phase: "betting",
+    countdown: SIMPLE_PHASE_DURATIONS.betting,
+    roundId: 1,
+    resultValue: null,
+    resultWon: false,
+    resultPayout: 0,
+  });
+
+  const pendingBetRef = useRef<PendingSimpleBet | null>(null);
+  const settledRef = useRef<boolean>(false);
+
+  // Tick every second
+  useEffect(() => {
+    const id = setInterval(() => {
+      setState((prev) => {
+        const newCountdown = prev.countdown - 1;
+        if (newCountdown > 0) return { ...prev, countdown: newCountdown };
+
+        const phases: SimplePhase[] = ["betting", "revealing", "wait"];
+        const currentIdx = phases.indexOf(prev.phase);
+        const nextPhase = phases[(currentIdx + 1) % phases.length];
+
+        let newResult = prev.resultValue;
+        let newWon = prev.resultWon;
+        let newPayout = prev.resultPayout;
+        let newRoundId = prev.roundId;
+
+        if (prev.phase === "betting") {
+          // Generate result when betting phase ends
+          const optIdx = Math.floor(Math.random() * options.length);
+          newResult = options[optIdx].value;
+          newWon = false;
+          newPayout = 0;
+          // settlement happens in the effect below
+        }
+
+        if (nextPhase === "betting") {
+          // New round
+          newResult = null;
+          newWon = false;
+          newPayout = 0;
+          newRoundId = prev.roundId + 1;
+          settledRef.current = false;
+          pendingBetRef.current = null;
+        }
+
+        return {
+          phase: nextPhase,
+          countdown: SIMPLE_PHASE_DURATIONS[nextPhase],
+          roundId: newRoundId,
+          resultValue: newResult,
+          resultWon: newWon,
+          resultPayout: newPayout,
+        };
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [options]);
+
+  // Settle bet when revealing phase starts
+  useEffect(() => {
+    if (
+      state.phase === "revealing" &&
+      state.resultValue &&
+      pendingBetRef.current &&
+      !settledRef.current &&
+      currentUser
+    ) {
+      settledRef.current = true;
+      const { choice, mult, stake } = pendingBetRef.current;
+      const didWin = state.resultValue === choice;
+      const payout = didWin ? Number.parseFloat((stake * mult).toFixed(2)) : 0;
+
+      if (didWin) {
+        creditUserBalance(currentUser.id, payout);
+        toast.success(
+          `${didWin ? "🎉 Win!" : ""} ${mult}x! +₹${(payout - stake).toFixed(2)}`,
+        );
+      } else {
+        toast.error(`Lost ₹${stake} — Result: ${state.resultValue}`);
+      }
+
+      addCasinoHistory({
+        userId: currentUser.id,
+        game: gameName,
+        roundId: String(state.roundId),
+        bet: choice,
+        stake,
+        result: state.resultValue,
+        pnl: didWin ? payout - stake : -stake,
+        placedAt: new Date().toISOString(),
+      });
+
+      setState((prev) => ({
+        ...prev,
+        resultWon: didWin,
+        resultPayout: payout,
+      }));
+    }
+  }, [
+    state.phase,
+    state.resultValue,
+    state.roundId,
+    gameName,
+    currentUser,
+    creditUserBalance,
+    addCasinoHistory,
+  ]);
+
+  const placeBet = useCallback(
+    (choice: string, mult: number, stake: number): boolean => {
+      if (state.phase !== "betting") {
+        toast.error("Betting window closed — wait for next round");
+        return false;
+      }
+      if (!currentUser) {
+        toast.error("Please login");
+        return false;
+      }
+      if (currentUser.balance < stake) {
+        toast.error("Insufficient balance");
+        return false;
+      }
+      if (stake <= 0) {
+        toast.error("Enter valid stake");
+        return false;
+      }
+      if (pendingBetRef.current) {
+        toast.error("Bet already placed for this round");
+        return false;
+      }
+      debitUserBalance(currentUser.id, stake);
+      pendingBetRef.current = { choice, mult, stake };
+      toast.success(`✅ Bet placed on ${choice} @ ₹${stake}`, {
+        description: "Waiting for round result...",
+      });
+      return true;
+    },
+    [state.phase, currentUser, debitUserBalance],
+  );
+
+  const hasPendingBet = !!pendingBetRef.current;
+  const pendingChoice = pendingBetRef.current?.choice ?? null;
+  const pendingStake = pendingBetRef.current?.stake ?? 0;
+
+  return { state, placeBet, hasPendingBet, pendingChoice, pendingStake };
 }
 
 // ─── GameShell ───────────────────────────────────────────────────────────────
@@ -130,6 +359,7 @@ function MinesGame({ onBack }: { onBack: () => void }) {
   const [currentMultiplier, setCurrentMultiplier] = useState(1);
   const [showWin, setShowWin] = useState(false);
   const [gameOver, setGameOver] = useState(false);
+  const [revealingMines, setRevealingMines] = useState<Set<number>>(new Set());
 
   const calcMultiplier = (revealed: number, mines: number) => {
     const _safe = 25 - mines;
@@ -160,9 +390,8 @@ function MinesGame({ onBack }: { onBack: () => void }) {
   const revealTile = (idx: number) => {
     if (!gameActive || grid[idx] !== "hidden") return;
     if (minePositions.has(idx)) {
-      const newGrid = grid.map((v, i) =>
-        minePositions.has(i) ? "mine" : v === "hidden" ? "hidden" : v,
-      ) as typeof grid;
+      // Immediately show the clicked mine
+      const newGrid = [...grid] as typeof grid;
       newGrid[idx] = "mine";
       setGrid(newGrid);
       setGameActive(false);
@@ -178,6 +407,25 @@ function MinesGame({ onBack }: { onBack: () => void }) {
         placedAt: new Date().toISOString(),
       });
       toast.error(`💣 Mine hit! Lost ₹${stake}`);
+      // Staggered reveal of all remaining mines
+      const otherMines = [...minePositions].filter((m) => m !== idx);
+      otherMines.forEach((mineIdx, i) => {
+        setTimeout(
+          () => {
+            setRevealingMines((prev) => new Set([...prev, mineIdx]));
+            setGrid((prev) => {
+              const g = [...prev] as typeof grid;
+              g[mineIdx] = "mine";
+              return g;
+            });
+          },
+          (i + 1) * 120,
+        );
+      });
+      setTimeout(
+        () => setRevealingMines(new Set()),
+        otherMines.length * 120 + 600,
+      );
     } else {
       const newGrid = [...grid] as typeof grid;
       newGrid[idx] = "gem";
@@ -255,33 +503,44 @@ function MinesGame({ onBack }: { onBack: () => void }) {
               </span>
             </div>
             <div className="grid grid-cols-5 gap-1.5">
-              {grid.map((tile, i) => (
-                <motion.button
-                  key={`minesweeper-${i}`}
-                  type="button"
-                  onClick={() => revealTile(i)}
-                  whileTap={{ scale: 0.9 }}
-                  disabled={!gameActive || tile !== "hidden"}
-                  className="aspect-square rounded-lg flex items-center justify-center text-lg font-bold transition-all"
-                  style={{
-                    background:
-                      tile === "gem"
-                        ? "oklch(0.65 0.18 145 / 0.3)"
-                        : tile === "mine"
-                          ? "oklch(0.62 0.22 20 / 0.3)"
-                          : "oklch(var(--secondary))",
-                    border:
-                      tile === "gem"
-                        ? "1px solid oklch(0.65 0.18 145 / 0.5)"
-                        : tile === "mine"
-                          ? "1px solid oklch(0.62 0.22 20 / 0.5)"
-                          : "1px solid oklch(var(--border))",
-                  }}
-                  data-ocid={`mines.tile.${i + 1}`}
-                >
-                  {tile === "gem" ? "💎" : tile === "mine" ? "💣" : ""}
-                </motion.button>
-              ))}
+              {grid.map((tile, i) => {
+                const isNewlyRevealedMine = revealingMines.has(i);
+                return (
+                  <motion.button
+                    key={`msw-tile-${i}-${tile}`}
+                    type="button"
+                    onClick={() => revealTile(i)}
+                    whileTap={{ scale: 0.9 }}
+                    animate={
+                      isNewlyRevealedMine
+                        ? { scale: [0, 1.3, 1], rotate: [0, -10, 10, 0] }
+                        : tile === "gem"
+                          ? { scale: [0, 1.2, 1] }
+                          : {}
+                    }
+                    transition={{ duration: 0.3, type: "spring" }}
+                    disabled={!gameActive || tile !== "hidden"}
+                    className="aspect-square rounded-lg flex items-center justify-center text-lg font-bold transition-all"
+                    style={{
+                      background:
+                        tile === "gem"
+                          ? "oklch(0.65 0.18 145 / 0.3)"
+                          : tile === "mine"
+                            ? "oklch(0.62 0.22 20 / 0.3)"
+                            : "oklch(var(--secondary))",
+                      border:
+                        tile === "gem"
+                          ? "1px solid oklch(0.65 0.18 145 / 0.5)"
+                          : tile === "mine"
+                            ? "1px solid oklch(0.62 0.22 20 / 0.5)"
+                            : "1px solid oklch(var(--border))",
+                    }}
+                    data-ocid={`mines.tile.${i + 1}`}
+                  >
+                    {tile === "gem" ? "💎" : tile === "mine" ? "💣" : ""}
+                  </motion.button>
+                );
+              })}
             </div>
             {gameActive && revealedCount > 0 && (
               <Button
@@ -653,53 +912,55 @@ function DiamondsGame({ onBack }: { onBack: () => void }) {
           Pick 3 tiles — find all 3 diamonds for 5x!
         </p>
         <div className="grid grid-cols-3 gap-2">
-          {Array.from({ length: GRID }).map((_, i) => {
-            const isPicked = picks.includes(i);
-            const isDiamond = diamonds.includes(i);
-            const isRevealedNow = revealedTiles.has(i);
-            const showContent = revealed && isRevealedNow;
-            return (
-              <motion.button
-                key={`diamond-${i}`}
-                type="button"
-                whileTap={{ scale: 0.9 }}
-                animate={
-                  showContent
-                    ? { rotateY: [0, 90, 180], scale: [1, 1.1, 1] }
-                    : isPicked && !revealed
-                      ? { scale: [1, 1.05, 1] }
-                      : {}
-                }
-                transition={{ duration: 0.3 }}
-                onClick={() => togglePick(i)}
-                disabled={revealed}
-                className="aspect-square rounded-xl flex items-center justify-center text-2xl font-bold transition-colors border"
-                style={{
-                  background: showContent
-                    ? isDiamond
-                      ? "oklch(0.65 0.18 145 / 0.3)"
+          {Array.from({ length: GRID }, (__, tileIdx) => tileIdx).map(
+            (tileIdx) => {
+              const isPicked = picks.includes(tileIdx);
+              const isDiamond = diamonds.includes(tileIdx);
+              const isRevealedNow = revealedTiles.has(tileIdx);
+              const showContent = revealed && isRevealedNow;
+              return (
+                <motion.button
+                  key={`dmnd-grid-tile-${tileIdx}`}
+                  type="button"
+                  whileTap={{ scale: 0.9 }}
+                  animate={
+                    showContent
+                      ? { rotateY: [0, 90, 180], scale: [1, 1.1, 1] }
+                      : isPicked && !revealed
+                        ? { scale: [1, 1.05, 1] }
+                        : {}
+                  }
+                  transition={{ duration: 0.3 }}
+                  onClick={() => togglePick(tileIdx)}
+                  disabled={revealed}
+                  className="aspect-square rounded-xl flex items-center justify-center text-2xl font-bold transition-colors border"
+                  style={{
+                    background: showContent
+                      ? isDiamond
+                        ? "oklch(0.65 0.18 145 / 0.3)"
+                        : isPicked
+                          ? "oklch(0.62 0.22 20 / 0.3)"
+                          : "oklch(var(--secondary))"
                       : isPicked
-                        ? "oklch(0.62 0.22 20 / 0.3)"
-                        : "oklch(var(--secondary))"
-                    : isPicked
-                      ? "oklch(var(--gold) / 0.2)"
-                      : "oklch(var(--secondary))",
-                  borderColor: showContent
-                    ? isDiamond
-                      ? "oklch(0.65 0.18 145 / 0.5)"
+                        ? "oklch(var(--gold) / 0.2)"
+                        : "oklch(var(--secondary))",
+                    borderColor: showContent
+                      ? isDiamond
+                        ? "oklch(0.65 0.18 145 / 0.5)"
+                        : isPicked
+                          ? "oklch(0.62 0.22 20 / 0.5)"
+                          : "oklch(var(--border))"
                       : isPicked
-                        ? "oklch(0.62 0.22 20 / 0.5)"
-                        : "oklch(var(--border))"
-                    : isPicked
-                      ? "oklch(var(--gold))"
-                      : "oklch(var(--border))",
-                }}
-                data-ocid={`diamonds.tile.${i + 1}`}
-              >
-                {showContent ? (isDiamond ? "💎" : "✗") : isPicked ? "✓" : ""}
-              </motion.button>
-            );
-          })}
+                        ? "oklch(var(--gold))"
+                        : "oklch(var(--border))",
+                  }}
+                  data-ocid={`diamonds.tile.${tileIdx + 1}`}
+                >
+                  {showContent ? (isDiamond ? "💎" : "✗") : isPicked ? "✓" : ""}
+                </motion.button>
+              );
+            },
+          )}
         </div>
         <p className="text-xs text-center text-muted-foreground">
           Selected: {picks.length}/3
@@ -888,7 +1149,7 @@ function TowerGame({ onBack }: { onBack: () => void }) {
                         const isPicking = isCurrent && pickingCol === col;
                         return (
                           <motion.button
-                            key={`tower-${col}`}
+                            key={`tw-c${col}-l${lvl}`}
                             type="button"
                             animate={
                               isPicking ? { scale: [1, 1.18, 0.95, 1] } : {}
@@ -1043,7 +1304,7 @@ function WheelGame({ onBack }: { onBack: () => void }) {
             >
               {segments.map((seg, i) => (
                 <div
-                  key={`wheel-seg-${i}`}
+                  key={`wh-${seg.label}-${i}`}
                   className="absolute text-[8px] font-bold text-white"
                   style={{
                     top: "50%",
@@ -1066,8 +1327,11 @@ function WheelGame({ onBack }: { onBack: () => void }) {
           </div>
         </div>
         {result && (
-          <p
-            className="text-center text-lg font-bold"
+          <motion.p
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: [0.5, 1.25, 1], opacity: 1 }}
+            transition={{ duration: 0.5, type: "spring", bounce: 0.5 }}
+            className="text-center text-2xl font-black"
             style={{
               color:
                 result.mult > 0
@@ -1076,7 +1340,7 @@ function WheelGame({ onBack }: { onBack: () => void }) {
             }}
           >
             {result.label}
-          </p>
+          </motion.p>
         )}
         <StakeInput stake={stake} setStake={setStake} disabled={spinning} />
         <Button
@@ -1475,6 +1739,7 @@ function BlackjackGame({ onBack }: { onBack: () => void }) {
   const [dealerCards, setDealerCards] = useState<number[]>([]);
   const [active, setActive] = useState(false);
   const [showWin, setShowWin] = useState(false);
+  const [dealerRevealedCount, setDealerRevealedCount] = useState(0);
 
   const drawCard = () => Math.min(10, Math.floor(Math.random() * 13) + 1);
   const total = (cards: number[]) => {
@@ -1529,11 +1794,24 @@ function BlackjackGame({ onBack }: { onBack: () => void }) {
   const stand = () => {
     let d = [...dealerCards];
     while (total(d) < 17) d.push(drawCard());
-    setDealerCards(d);
+    setDealerRevealedCount(0);
+    // Animate dealer cards revealing one by one with 150ms delay
+    d.forEach((_, i) => {
+      setTimeout(() => {
+        setDealerRevealedCount(i + 1);
+      }, i * 150);
+    });
     const pTotal = total(playerCards);
     const dTotal = total(d);
     const won = pTotal <= 21 && (pTotal > dTotal || dTotal > 21);
-    finish(playerCards, d, won);
+    // Delay finish to let animations play
+    setTimeout(
+      () => {
+        setDealerCards(d);
+        finish(playerCards, d, won);
+      },
+      d.length * 150 + 300,
+    );
   };
 
   const finish = (p: number[], d: number[], won: boolean) => {
@@ -1568,20 +1846,48 @@ function BlackjackGame({ onBack }: { onBack: () => void }) {
   const CardDisplay = ({
     cards,
     hideSecond,
-  }: { cards: number[]; hideSecond?: boolean }) => (
-    <div className="flex gap-2 justify-center">
-      {cards.map((c, i) => (
-        <motion.div
-          key={`card-${i}-${c}`}
-          initial={{ y: -20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: i * 0.1, type: "spring", bounce: 0.4 }}
-          className="w-12 h-16 rounded-lg border-2 border-gold flex items-center justify-center font-bold text-lg"
-          style={{ background: "oklch(var(--secondary))" }}
-        >
-          {hideSecond && i === 1 ? "?" : RANKS[c]}
-        </motion.div>
-      ))}
+    isDealer,
+  }: { cards: number[]; hideSecond?: boolean; isDealer?: boolean }) => (
+    <div className="flex gap-2 justify-center flex-wrap">
+      {cards.map((c, i) => {
+        const isFlipping =
+          isDealer &&
+          !active &&
+          dealerRevealedCount > 0 &&
+          dealerRevealedCount <= i;
+        const isRevealing =
+          isDealer && !active && dealerRevealedCount === i + 1;
+        return (
+          <motion.div
+            key={`card-${i}-${c}`}
+            initial={{ y: -20, opacity: 0, rotateY: 90 }}
+            animate={
+              isRevealing
+                ? {
+                    y: 0,
+                    opacity: 1,
+                    rotateY: [90, -10, 0],
+                    scale: [1, 1.15, 1],
+                  }
+                : { y: 0, opacity: 1, rotateY: 0 }
+            }
+            transition={
+              isRevealing
+                ? { duration: 0.4, type: "spring", bounce: 0.4 }
+                : { delay: i * 0.1, type: "spring", bounce: 0.4 }
+            }
+            className="w-12 h-16 rounded-lg border-2 border-gold flex items-center justify-center font-bold text-lg"
+            style={{
+              background: isFlipping
+                ? "oklch(0.25 0.01 265)"
+                : "oklch(var(--secondary))",
+              perspective: "400px",
+            }}
+          >
+            {hideSecond && i === 1 ? "?" : isFlipping ? "" : RANKS[c]}
+          </motion.div>
+        );
+      })}
     </div>
   );
 
@@ -1617,7 +1923,11 @@ function BlackjackGame({ onBack }: { onBack: () => void }) {
                     ? `(${total(dealerCards)})`
                     : ""}
                 </p>
-                <CardDisplay cards={dealerCards} hideSecond={active} />
+                <CardDisplay
+                  cards={dealerCards}
+                  hideSecond={active}
+                  isDealer={true}
+                />
               </div>
               <div className="text-center">
                 <p className="text-xs text-muted-foreground mb-1">
@@ -1678,108 +1988,252 @@ function SimpleGame({
   config,
   onBack,
 }: { config: SimpleGameConfig; onBack: () => void }) {
-  const { currentUser, debitUserBalance, creditUserBalance, addCasinoHistory } =
-    useStore();
   const [stake, setStake] = useState(100);
-  const [result, setResult] = useState<string | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [won, setWon] = useState(false);
+  const { state, placeBet, hasPendingBet, pendingChoice, pendingStake } =
+    useSimpleGameLoop(config.gameName, config.options);
+
   const [showWin, setShowWin] = useState(false);
 
-  const play = async (choice: string, mult: number) => {
-    if (!currentUser) return toast.error("Please login");
-    if (currentUser.balance < stake) return toast.error("Insufficient balance");
-    if (stake <= 0) return toast.error("Enter valid stake");
-    debitUserBalance(currentUser.id, stake);
-    setPlaying(true);
-    setResult(null);
-    await new Promise((r) => setTimeout(r, 600));
-    const optIdx = Math.floor(Math.random() * config.options.length);
-    const outcome = config.options[optIdx].value;
-    const didWin = outcome === choice;
-    const payout = didWin ? Number.parseFloat((stake * mult).toFixed(2)) : 0;
-    if (didWin) {
-      creditUserBalance(currentUser.id, payout);
+  // Show win overlay when result arrives and user won
+  useEffect(() => {
+    if (state.phase === "revealing" && state.resultWon) {
       setShowWin(true);
-      setTimeout(() => setShowWin(false), 2000);
+      const t = setTimeout(() => setShowWin(false), 2500);
+      return () => clearTimeout(t);
     }
-    addCasinoHistory({
-      userId: currentUser.id,
-      game: config.gameName,
-      roundId: genId(),
-      bet: choice,
-      stake,
-      result: outcome,
-      pnl: didWin ? payout - stake : -stake,
-      placedAt: new Date().toISOString(),
-    });
-    setResult(outcome);
-    setWon(didWin);
-    setPlaying(false);
-    if (didWin)
-      toast.success(
-        `${config.icon} Win! ${mult}x! +₹${(payout - stake).toFixed(2)}`,
-      );
-    else toast.error(`${config.icon} ${outcome}. Lost ₹${stake}`);
-  };
+  }, [state.phase, state.resultWon]);
+
+  const resultOption = config.options.find(
+    (o) => o.value === state.resultValue,
+  );
 
   return (
     <GameShell title={config.title} icon={config.icon} onBack={onBack}>
       <AnimatePresence>
         {showWin && <WinOverlay show={showWin} />}
       </AnimatePresence>
+
       <div className="rounded-xl border border-border bg-card p-4 space-y-4">
+        {/* Phase indicator bar */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {state.phase === "betting" && (
+              <>
+                <span
+                  className="w-2 h-2 rounded-full animate-pulse"
+                  style={{ background: "oklch(var(--saffron))" }}
+                />
+                <span
+                  className="text-xs font-bold"
+                  style={{ color: "oklch(var(--saffron))" }}
+                >
+                  🎰 Bet Now ({state.countdown}s)
+                </span>
+              </>
+            )}
+            {state.phase === "revealing" && (
+              <>
+                <span className="w-2 h-2 rounded-full bg-gold" />
+                <span className="text-xs font-bold text-gold">
+                  ⏳ Revealing...
+                </span>
+              </>
+            )}
+            {state.phase === "wait" && (
+              <>
+                <span className="w-2 h-2 rounded-full bg-muted-foreground" />
+                <span className="text-xs text-muted-foreground">
+                  🔄 Next round in {state.countdown}s
+                </span>
+              </>
+            )}
+          </div>
+          <span className="text-[10px] text-muted-foreground font-mono">
+            Round #{state.roundId}
+          </span>
+        </div>
+
+        {/* Progress bar for betting phase */}
+        {state.phase === "betting" && (
+          <div
+            className="w-full h-1 rounded-full overflow-hidden"
+            style={{ background: "oklch(var(--secondary))" }}
+          >
+            <motion.div
+              className="h-full rounded-full"
+              style={{ background: "oklch(var(--saffron))" }}
+              animate={{
+                width: `${(state.countdown / SIMPLE_PHASE_DURATIONS.betting) * 100}%`,
+              }}
+              transition={{ duration: 0.9, ease: "linear" }}
+            />
+          </div>
+        )}
+
         <p className="text-xs text-muted-foreground text-center">
           {config.description}
         </p>
-        {result && (
-          <motion.div
-            initial={{ scale: 0.8 }}
-            animate={{ scale: 1 }}
-            className="text-center py-3 rounded-xl border"
-            style={{
-              background: won
-                ? "oklch(0.65 0.18 145 / 0.1)"
-                : "oklch(0.62 0.22 20 / 0.1)",
-              borderColor: won
-                ? "oklch(0.65 0.18 145 / 0.3)"
-                : "oklch(0.62 0.22 20 / 0.3)",
-            }}
-          >
-            <p className="font-bold text-lg">
-              {config.options.find((o) => o.value === result)?.label ?? result}
-            </p>
-            <p
-              className="text-xs"
+
+        {/* Result reveal — animated */}
+        <AnimatePresence mode="wait">
+          {state.phase === "revealing" && state.resultValue && (
+            <motion.div
+              key={`result-${state.roundId}`}
+              initial={{ scale: 0, opacity: 0 }}
+              animate={
+                state.resultWon
+                  ? { scale: [0, 1.3, 1], opacity: 1 }
+                  : { scale: [0, 1.05, 1], x: [0, -8, 8, -8, 8, 0], opacity: 1 }
+              }
+              exit={{ scale: 0, opacity: 0 }}
+              transition={
+                state.resultWon
+                  ? { duration: 0.5, type: "spring", bounce: 0.5 }
+                  : { duration: 0.4 }
+              }
+              className="relative text-center py-5 rounded-xl border overflow-hidden"
               style={{
-                color: won ? "oklch(0.65 0.18 145)" : "oklch(0.62 0.22 20)",
+                background: state.resultWon
+                  ? "oklch(0.65 0.18 145 / 0.12)"
+                  : "oklch(0.62 0.22 20 / 0.12)",
+                borderColor: state.resultWon
+                  ? "oklch(0.65 0.18 145 / 0.5)"
+                  : "oklch(0.62 0.22 20 / 0.5)",
               }}
             >
-              {won ? "WIN!" : "LOSS"}
-            </p>
+              {/* Win glow ring */}
+              {state.resultWon && (
+                <motion.div
+                  className="absolute inset-0 rounded-xl"
+                  animate={{ opacity: [0.6, 0.2, 0.6] }}
+                  transition={{
+                    duration: 1.2,
+                    repeat: Number.POSITIVE_INFINITY,
+                  }}
+                  style={{
+                    boxShadow: "inset 0 0 30px oklch(0.65 0.18 145 / 0.4)",
+                    border: "2px solid oklch(0.65 0.18 145 / 0.6)",
+                  }}
+                />
+              )}
+              {/* Background flash */}
+              <motion.div
+                className="absolute inset-0 rounded-xl"
+                initial={{ opacity: 0.4 }}
+                animate={{ opacity: 0 }}
+                transition={{ duration: 0.8 }}
+                style={{
+                  background: state.resultWon
+                    ? "oklch(0.65 0.18 145 / 0.2)"
+                    : "oklch(0.62 0.22 20 / 0.2)",
+                }}
+              />
+              <div className="relative z-10">
+                <p className="text-4xl mb-1">
+                  {resultOption?.label.split(" ")[0] ?? config.icon}
+                </p>
+                <p className="font-bold text-base">
+                  {resultOption?.label ?? state.resultValue}
+                </p>
+                <p
+                  className="text-sm font-black mt-1"
+                  style={{
+                    color: state.resultWon
+                      ? "oklch(0.65 0.18 145)"
+                      : "oklch(0.62 0.22 20)",
+                  }}
+                >
+                  {state.resultWon
+                    ? `WIN! +₹${(state.resultPayout - pendingStake).toFixed(2)}`
+                    : "LOSS"}
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Bet placed confirmation */}
+        {hasPendingBet && state.phase === "betting" && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-center text-xs rounded-lg py-2 px-3"
+            style={{
+              background: "oklch(var(--saffron) / 0.1)",
+              border: "1px solid oklch(var(--saffron) / 0.3)",
+              color: "oklch(var(--saffron))",
+            }}
+          >
+            ✅ Bet placed on{" "}
+            <span className="font-bold">
+              {config.options.find((o) => o.value === pendingChoice)?.label ??
+                pendingChoice}
+            </span>{" "}
+            — waiting for result
           </motion.div>
         )}
-        <StakeInput stake={stake} setStake={setStake} disabled={playing} />
-        <div
-          className={`grid gap-2 ${config.options.length <= 2 ? "grid-cols-2" : config.options.length <= 3 ? "grid-cols-3" : "grid-cols-2"}`}
-        >
-          {config.options.map((opt) => (
-            <Button
-              key={opt.value}
-              onClick={() => play(opt.value, opt.mult)}
-              disabled={playing}
-              className="h-14 font-bold flex flex-col gap-1 text-white text-sm"
-              style={{ background: opt.color }}
-              data-ocid={`${config.gameName}.${opt.value}_button`}
-            >
-              <span className="text-lg">{opt.label.split(" ")[0]}</span>
-              <span className="text-xs opacity-80">{opt.mult}x</span>
-            </Button>
-          ))}
-        </div>
-        {playing && (
-          <div className="text-center text-muted-foreground text-sm animate-pulse">
-            Rolling...
+
+        {/* Stake input — only show during betting phase and no pending bet */}
+        {state.phase === "betting" && !hasPendingBet && (
+          <StakeInput stake={stake} setStake={setStake} />
+        )}
+
+        {/* Bet buttons */}
+        {state.phase === "betting" && !hasPendingBet && (
+          <div
+            className={`grid gap-2 ${config.options.length <= 2 ? "grid-cols-2" : config.options.length <= 3 ? "grid-cols-3" : "grid-cols-2"}`}
+          >
+            {config.options.map((opt) => (
+              <motion.button
+                key={opt.value}
+                type="button"
+                whileHover={{ scale: 1.04 }}
+                whileTap={{ scale: 0.96 }}
+                onClick={() => placeBet(opt.value, opt.mult, stake)}
+                className="h-14 font-bold flex flex-col items-center justify-center gap-0.5 text-white text-sm rounded-lg transition-all relative overflow-hidden"
+                style={{ background: opt.color }}
+                data-ocid={`${config.gameName}.${opt.value}_button`}
+              >
+                {/* Shiny shimmer */}
+                <motion.div
+                  className="absolute inset-0 opacity-0"
+                  style={{
+                    background:
+                      "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.15) 50%, transparent 60%)",
+                  }}
+                  animate={{ opacity: [0, 1, 0], x: ["-100%", "100%"] }}
+                  transition={{
+                    duration: 2.5,
+                    repeat: Number.POSITIVE_INFINITY,
+                    repeatDelay: 1,
+                  }}
+                />
+                <span className="text-lg relative z-10">
+                  {opt.label.split(" ")[0]}
+                </span>
+                <span className="text-xs opacity-90 font-bold relative z-10">
+                  {opt.mult}x
+                </span>
+              </motion.button>
+            ))}
+          </div>
+        )}
+
+        {/* Disabled buttons while round runs */}
+        {(state.phase === "revealing" || state.phase === "wait") && (
+          <div
+            className={`grid gap-2 ${config.options.length <= 2 ? "grid-cols-2" : config.options.length <= 3 ? "grid-cols-3" : "grid-cols-2"}`}
+          >
+            {config.options.map((opt) => (
+              <div
+                key={opt.value}
+                className="h-14 font-bold flex flex-col items-center justify-center gap-0.5 text-white/40 text-sm rounded-lg"
+                style={{ background: `${opt.color}55` }}
+              >
+                <span className="text-lg">{opt.label.split(" ")[0]}</span>
+                <span className="text-xs">{opt.mult}x</span>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -2026,24 +2480,24 @@ function ScratchCardGame({ onBack }: { onBack: () => void }) {
               Tap to scratch each tile!
             </p>
             <div className="grid grid-cols-3 gap-2">
-              {symbols.map((sym, i) => (
+              {symbols.map((sym, scrIdx) => (
                 <motion.button
-                  key={`scratch-${i}`}
+                  key={`scr-pos${scrIdx}-${sym}`}
                   type="button"
                   whileTap={{ scale: 0.9 }}
-                  onClick={() => scratch(i)}
+                  onClick={() => scratch(scrIdx)}
                   className="aspect-square rounded-xl flex items-center justify-center text-2xl transition-all border"
                   style={{
-                    background: scratched[i]
+                    background: scratched[scrIdx]
                       ? "oklch(var(--secondary))"
                       : "oklch(var(--gold) / 0.3)",
-                    borderColor: scratched[i]
+                    borderColor: scratched[scrIdx]
                       ? "oklch(var(--border))"
                       : "oklch(var(--gold))",
                   }}
-                  data-ocid={`scratch.tile.${i + 1}`}
+                  data-ocid={`scratch.tile.${scrIdx + 1}`}
                 >
-                  {scratched[i] ? sym : "🔘"}
+                  {scratched[scrIdx] ? sym : "🔘"}
                 </motion.button>
               ))}
             </div>
@@ -2133,28 +2587,30 @@ function SattaMatkaGame({ onBack }: { onBack: () => void }) {
           </div>
         )}
         <div className="grid grid-cols-5 gap-2">
-          {Array.from({ length: 10 }, (_, i) => (
-            <button
-              key={`pick-${i}`}
-              type="button"
-              onClick={() => setPick(String(i))}
-              disabled={playing}
-              className="aspect-square rounded-xl text-xl font-bold border-2 transition-all"
-              style={{
-                background:
-                  pick === String(i)
-                    ? "oklch(var(--gold) / 0.2)"
-                    : "oklch(var(--secondary))",
-                borderColor:
-                  pick === String(i)
-                    ? "oklch(var(--gold))"
-                    : "oklch(var(--border))",
-              }}
-              data-ocid={`matka.digit.${i}`}
-            >
-              {i}
-            </button>
-          ))}
+          {Array.from({ length: 10 }, (_, digitPos) => digitPos).map(
+            (digitPos) => (
+              <button
+                key={`matka-d${digitPos}`}
+                type="button"
+                onClick={() => setPick(String(digitPos))}
+                disabled={playing}
+                className="aspect-square rounded-xl text-xl font-bold border-2 transition-all"
+                style={{
+                  background:
+                    pick === String(digitPos)
+                      ? "oklch(var(--gold) / 0.2)"
+                      : "oklch(var(--secondary))",
+                  borderColor:
+                    pick === String(digitPos)
+                      ? "oklch(var(--gold))"
+                      : "oklch(var(--border))",
+                }}
+                data-ocid={`matka.digit.${digitPos}`}
+              >
+                {digitPos}
+              </button>
+            ),
+          )}
         </div>
         <StakeInput stake={stake} setStake={setStake} disabled={playing} />
         <Button
@@ -3570,8 +4026,15 @@ export function GamesLobby() {
               <div
                 className={`absolute inset-0 bg-gradient-to-br ${game.color} opacity-0 group-hover:opacity-100 transition-opacity`}
               />
+              {/* LIVE badge */}
+              <div className="absolute top-1.5 left-1.5 flex items-center gap-1 bg-green-500/20 border border-green-500/40 rounded-full px-1.5 py-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                <span className="text-[8px] font-bold text-green-400">
+                  LIVE
+                </span>
+              </div>
               <div className="relative z-10">
-                <div className="text-3xl mb-1">{game.icon}</div>
+                <div className="text-3xl mb-1 mt-1">{game.icon}</div>
                 <p className="text-xs font-bold text-gray-200 truncate">
                   {game.title}
                 </p>
@@ -3619,7 +4082,26 @@ export function GamesLobby() {
                     <div
                       className={`absolute inset-0 bg-gradient-to-br ${game.color} opacity-0 group-hover:opacity-100 transition-opacity`}
                     />
-                    <div className="relative z-10">
+                    {/* LIVE badge */}
+                    <div className="absolute top-1 left-1 flex items-center gap-0.5 bg-green-500/20 border border-green-500/30 rounded-full px-1 py-0.5">
+                      <span className="w-1 h-1 rounded-full bg-green-500 animate-pulse" />
+                      <span className="text-[7px] font-bold text-green-400">
+                        LIVE
+                      </span>
+                    </div>
+                    {/* Betting open dot */}
+                    <div className="absolute top-1 right-1">
+                      <motion.div
+                        className="w-1.5 h-1.5 rounded-full"
+                        style={{ background: "oklch(var(--saffron))" }}
+                        animate={{ opacity: [1, 0.3, 1] }}
+                        transition={{
+                          duration: 1.5,
+                          repeat: Number.POSITIVE_INFINITY,
+                        }}
+                      />
+                    </div>
+                    <div className="relative z-10 mt-1">
                       <div className="text-2xl mb-1">{game.icon}</div>
                       <p className="text-[10px] font-bold text-gray-200 leading-tight">
                         {game.title}
